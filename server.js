@@ -24,34 +24,6 @@ const createJiraHeaders = (auth) => ({
     'Content-Type': 'application/json'
 });
 
-// Utility function to convert ticket data to CSV
-function convertToCSV(tickets) {
-    // Define CSV headers
-    const headers = [
-        'Key',
-        'Summary',
-        'Description',
-        'Comment Count',
-        'Attachment Count',
-        'Comments',
-        'Attachments'
-    ];
-
-    // Convert tickets to CSV rows
-    const rows = tickets.map(ticket => [
-        ticket.key,
-        `"${(ticket.summary || '').replace(/"/g, '""')}"`,
-        `"${(ticket.description || '').replace(/"/g, '""')}"`,
-        ticket.comments.length,
-        ticket.attachments.length,
-        `"${ticket.comments.map(c => c.body.replace(/"/g, '""')).join('\\n')}"`,
-        ticket.attachments.map(a => a.filename).join(', ')
-    ]);
-
-    // Combine headers and rows
-    return [headers, ...rows].map(row => row.join(',')).join('\n');
-}
-
 // Test connection endpoint
 app.post('/api/test-connection', async (req, res) => {
     const { username, apiKey } = req.body;
@@ -128,7 +100,6 @@ app.get('/api/download-tickets', async (req, res) => {
 
         const projectInfo = projectResponse.data;
         const totalIssues = countResponse.data.total;
-        const batchSize = 100;
         let issues = [];
         const startTime = Date.now();
         const progress = {
@@ -137,8 +108,6 @@ app.get('/api/download-tickets', async (req, res) => {
             totalIssues,
             currentIssue: 0,
             batchProgress: 0,
-            totalBatches: Math.ceil(totalIssues / batchSize),
-            currentBatch: 0,
             estimatedSize: '0 MB',
             downloadedSize: '0 MB',
             timeElapsed: '0s',
@@ -151,13 +120,6 @@ app.get('/api/download-tickets', async (req, res) => {
         const updateTimeEstimates = () => {
             const elapsed = Math.floor((Date.now() - startTime) / 1000);
             progress.timeElapsed = `${elapsed}s`;
-            
-            if (progress.currentIssue > 0) {
-                const issuesPerSecond = progress.currentIssue / elapsed;
-                const remainingIssues = totalIssues - progress.currentIssue;
-                const estimatedSeconds = Math.floor(remainingIssues / issuesPerSecond);
-                progress.estimatedTimeRemaining = `${estimatedSeconds}s`;
-            }
         };
 
         // Send initial progress
@@ -183,169 +145,53 @@ app.get('/api/download-tickets', async (req, res) => {
             progress.currentIssue = issues.length;
             progress.batchProgress = 100;
             sendProgress(progress);
-        } else {
-            // Fetch all issues in batches for other download types
-            for (let startAt = 0; startAt < totalIssues; startAt += batchSize) {
-                progress.stage = 'fetching';
-                progress.currentBatch++;
-                progress.currentOperation = 'Fetching tickets';
-                progress.operationDetails = `Batch ${progress.currentBatch} of ${progress.totalBatches}`;
-                progress.message = `Fetching tickets ${startAt + 1} to ${Math.min(startAt + batchSize, totalIssues)} of ${totalIssues}...`;
-                updateTimeEstimates();
-                sendProgress(progress);
-
-                const response = await axios.post('https://thehut.atlassian.net/rest/api/2/search', {
-                    jql,
-                    startAt,
-                    maxResults: batchSize,
-                    fields: ['summary', 'description', 'comment', 'attachment'],
-                    expand: ['comments']  // Ensure we get all comments
-                }, {
-                    headers: createJiraHeaders(auth)
-                });
-
-                issues.push(...response.data.issues);
-                progress.currentIssue = issues.length;
-                progress.batchProgress = (issues.length / totalIssues) * 100;
-                sendProgress(progress);
-            }
         }
 
         const downloadData = {
             projectInfo,
-            tickets: [],
-            totalComments: 0,
             totalAttachments: 0,
             estimatedSize: '0 MB'
         };
 
-        // Create a zip file for the project
-        const zip = new AdmZip();
-        const projectDir = `${projectKey}`;
-
-        // Create a JSON file with ticket data
-        const ticketsData = [];
-
         // Process each issue and estimate total size
         progress.stage = 'processing';
         let totalEstimatedBytes = 0;
+        let totalAttachmentCount = 0;
         
-        for (const [index, issue] of issues.entries()) {
-            progress.currentOperation = 'Processing tickets';
-            progress.operationDetails = `Ticket ${index + 1} of ${issues.length}`;
-            progress.message = `Processing ticket ${index + 1} of ${issues.length}...`;
-            updateTimeEstimates();
-            progress.currentIssue = index + 1;
-            res.write(`data: ${JSON.stringify(progress)}\n\n`);
-            
-            const ticket = {
-                key: issue.key,
-                summary: issue.fields.summary,
-                description: issue.fields.description,
-                comments: [],
-                attachments: []
-            };
-
-            // Get comments if not attachments-only mode
-            if (downloadType !== 'attachments' && issue.fields.comment) {
-                ticket.comments = issue.fields.comment.comments;
-                downloadData.totalComments += ticket.comments.length;
-            }
-
-            // Get attachments if not tickets-only mode
-            if (downloadType !== 'tickets' && issue.fields.attachment) {
+        // First pass: count attachments and calculate total size
+        for (const issue of issues) {
+            if (issue.fields.attachment) {
+                totalAttachmentCount += issue.fields.attachment.length;
                 for (const attachment of issue.fields.attachment) {
-                    try {
-                        // Add attachment size to total estimate
-                        totalEstimatedBytes += parseInt(attachment.size || 0);
-                        
-                        progress.currentOperation = 'Downloading attachments';
-                        progress.operationDetails = `${downloadData.totalAttachments + 1} of ${issue.fields.attachment.length}`;
-                        progress.message = `Downloading: ${attachment.filename}`;
-                        updateTimeEstimates();
-                        sendProgress(progress);
-
-                        // Download attachment in chunks using Range header
-                        const attachmentPath = `${projectDir}/${issue.key}/${attachment.filename}`;
-                        const chunkSize = 50 * 1024 * 1024; // 50MB chunks
-                        const totalChunks = Math.ceil(attachment.size / chunkSize);
-                        let downloadedSize = 0;
-
-                        for (let chunkNumber = 0; chunkNumber < totalChunks; chunkNumber++) {
-                            const start = chunkNumber * chunkSize;
-                            const end = Math.min(start + chunkSize, attachment.size) - 1;
-
-                            try {
-                                // Download chunk
-                                const chunkResponse = await axios.get(attachment.content, {
-                                    headers: {
-                                        ...createJiraHeaders(auth),
-                                        Range: `bytes=${start}-${end}`
-                                    },
-                                    responseType: 'arraybuffer'
-                                });
-
-                                // Update progress
-                                downloadedSize += chunkResponse.data.length;
-                                progress.message = `Downloading: ${attachment.filename} (${(downloadedSize / (1024 * 1024)).toFixed(1)}MB)`;
-                                progress.operationDetails = `Part ${chunkNumber + 1} of ${totalChunks} - ${(downloadedSize / attachment.size * 100).toFixed(1)}%`;
-                                sendProgress(progress);
-
-                                // Save chunk
-                                const chunkPath = totalChunks > 1 
-                                    ? `${attachmentPath}.part${chunkNumber + 1}` 
-                                    : attachmentPath;
-                                zip.addFile(chunkPath, Buffer.from(chunkResponse.data));
-
-                            } catch (error) {
-                                console.error(`Failed to download chunk ${chunkNumber + 1} of ${attachment.filename}: ${error.message}`);
-                                throw error;
-                            }
-                        }
-                        
-                        ticket.attachments.push({
-                            filename: attachment.filename,
-                            path: attachmentPath,
-                            size: attachment.size
-                        });
-                        
-                        downloadData.totalAttachments++;
-                        
-                        // Update progress with downloaded size
-                        progress.downloadedSize = `${(totalEstimatedBytes / (1024 * 1024)).toFixed(1)} MB`;
-                        sendProgress(progress);
-                    } catch (error) {
-                        console.error(`Failed to download attachment: ${attachment.filename}`);
-                    }
+                    totalEstimatedBytes += parseInt(attachment.size || 0);
                 }
             }
-
-            // Add ticket data if not attachments-only mode
-            if (downloadType !== 'attachments') {
-                ticketsData.push(ticket);
-                downloadData.tickets.push(ticket);
-            }
         }
 
-        // Add ticket data to zip if not attachments-only mode
-        if (downloadType !== 'attachments') {
-            progress.stage = 'finalizing';
-            progress.currentOperation = 'Finalizing';
-            progress.operationDetails = 'Creating data file';
-            progress.message = `Converting to ${fileFormat.toUpperCase()}...`;
-            updateTimeEstimates();
-            sendProgress(progress);
-
-            downloadData.estimatedSize = `${(totalEstimatedBytes / (1024 * 1024)).toFixed(1)} MB`;
+        // Second pass: process attachments
+        let processedAttachments = 0;
+        for (const issue of issues) {
+            if (!issue.fields.attachment) continue;
             
-            // Add ticket data in selected format
-            if (fileFormat === 'csv') {
-                const csvData = convertToCSV(ticketsData);
-                zip.addFile(`${projectDir}/tickets.csv`, Buffer.from(csvData));
-            } else {
-                zip.addFile(`${projectDir}/tickets.json`, Buffer.from(JSON.stringify(ticketsData, null, 2)));
+            for (const attachment of issue.fields.attachment) {
+                try {
+                    processedAttachments++;
+                    const attachmentSize = parseInt(attachment.size || 0);
+                    
+                    progress.currentOperation = 'Processing attachments';
+                    progress.operationDetails = `${processedAttachments} of ${totalAttachmentCount}`;
+                    progress.message = `Processing: ${attachment.filename} (${(attachmentSize / (1024 * 1024)).toFixed(1)}MB)`;
+                    updateTimeEstimates();
+                    sendProgress(progress);
+                    
+                    downloadData.totalAttachments++;
+                } catch (error) {
+                    console.error(`Failed to process attachment: ${attachment.filename}`);
+                }
             }
         }
+
+        downloadData.estimatedSize = `${(totalEstimatedBytes / (1024 * 1024)).toFixed(1)} MB`;
 
         // Calculate segments needed for attachments
         const SEGMENT_SIZE_LIMIT = 50 * 1024 * 1024; // 50MB per segment
@@ -430,16 +276,6 @@ app.get('/api/download-tickets', async (req, res) => {
         for (const segment of attachmentSegments) {
             const segmentZip = new AdmZip();
             
-            // Add ticket data if not attachments-only mode
-            if (downloadType !== 'attachments') {
-                if (fileFormat === 'csv') {
-                    const csvData = convertToCSV(ticketsData);
-                    segmentZip.addFile(`${projectDir}/tickets.csv`, Buffer.from(csvData));
-                } else {
-                    segmentZip.addFile(`${projectDir}/tickets.json`, Buffer.from(JSON.stringify(ticketsData, null, 2)));
-                }
-            }
-
             // Add attachments for this segment
             for (const file of segment.files) {
                 const { ticket, attachment, partNumber, totalParts, startByte, endByte } = file;
@@ -459,7 +295,7 @@ app.get('/api/download-tickets', async (req, res) => {
                     : attachment.filename;
                     
                 segmentZip.addFile(
-                    `${projectDir}/${ticket}/${filename}`, 
+                    `${projectKey}/${ticket}/${filename}`, 
                     Buffer.from(attachmentResponse.data)
                 );
             }
