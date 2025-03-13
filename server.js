@@ -245,7 +245,7 @@ app.get('/api/download-tickets', async (req, res) => {
 
                         // Download attachment in chunks
                         const attachmentPath = `${projectDir}/${issue.key}/${attachment.filename}`;
-                        const chunkSize = 100 * 1024 * 1024; // 100MB chunks
+                        const chunkSize = 50 * 1024 * 1024; // 50MB chunks
                         let downloadedSize = 0;
                         const chunks = [];
 
@@ -326,14 +326,14 @@ app.get('/api/download-tickets', async (req, res) => {
         }
 
         // Calculate optimal segment size based on total data
-        const SEGMENT_SIZE_LIMIT = 1024 * 1024 * 1024; // 1GB per segment
+        const SEGMENT_SIZE_LIMIT = 50 * 1024 * 1024; // 50MB per segment
         const totalSize = totalEstimatedBytes;
         const segmentCount = Math.ceil(totalSize / SEGMENT_SIZE_LIMIT);
         const ticketsPerSegment = Math.ceil(ticketsData.length / segmentCount);
 
         progress.stage = 'segmenting';
         progress.currentOperation = 'Creating download segments';
-        progress.operationDetails = `Preparing ${segmentCount} segments`;
+        progress.operationDetails = `Preparing ${segmentCount} segments (50MB each)`;
         progress.message = 'Organizing files into segments...';
         sendProgress(progress);
 
@@ -382,7 +382,7 @@ app.get('/api/download-tickets', async (req, res) => {
             });
 
             progress.currentOperation = 'Creating segments';
-            progress.operationDetails = `Created segment ${i + 1} of ${segmentCount}`;
+            progress.operationDetails = `Created segment ${i + 1} of ${segmentCount} (50MB segments)`;
             progress.message = `Segment ${i + 1}: ${(segmentSize / (1024 * 1024)).toFixed(1)}MB`;
             sendProgress(progress);
         }
@@ -400,7 +400,8 @@ app.get('/api/download-tickets', async (req, res) => {
                 ...downloadData,
                 segments,
                 totalSegments: segmentCount,
-                totalSize: `${(totalSize / (1024 * 1024)).toFixed(1)}MB`
+                totalSize: `${(totalSize / (1024 * 1024)).toFixed(1)}MB`,
+                segmentSize: '50MB'
             }
         });
     } catch (error) {
