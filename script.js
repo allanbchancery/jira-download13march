@@ -439,37 +439,85 @@ downloadBtn.addEventListener('click', async () => {
                 `;
                 document.body.appendChild(downloadDialog);
                 
-                // Wait for user to click download
-                await new Promise(resolve => {
-                    downloadDialog.querySelector('.download-start').addEventListener('click', () => {
-                        downloadDialog.remove();
-                        resolve();
+                // Handle segment downloads
+                if (data.data.segments) {
+                    // Add click handlers for segment downloads
+                    const downloadSegments = downloadDialog.querySelectorAll('.download-segment');
+                    downloadSegments.forEach(button => {
+                        button.addEventListener('click', async () => {
+                            const filename = button.dataset.filename;
+                            button.disabled = true;
+                            button.textContent = 'Downloading...';
+                            
+                            try {
+                                const zipResponse = await fetch(`${API_BASE_URL}/download-project/${filename}`);
+                                if (!zipResponse.ok) {
+                                    throw new Error('Failed to download segment');
+                                }
+                                
+                                const blob = await zipResponse.blob();
+                                const url = window.URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = filename;
+                                document.body.appendChild(a);
+                                a.click();
+                                document.body.removeChild(a);
+                                window.URL.revokeObjectURL(url);
+                                
+                                button.textContent = 'Downloaded';
+                                button.classList.add('success');
+                            } catch (error) {
+                                button.textContent = 'Failed - Try Again';
+                                button.disabled = false;
+                                button.classList.add('error');
+                            }
+                        });
                     });
-                });
-                
-                updateProgress(project, 80, 'Downloading project archive...');
-                
-                try {
-                    const zipResponse = await fetch(`${API_BASE_URL}/download-project/${data.data.zipFile}`);
-                    if (!zipResponse.ok) {
-                        throw new Error('Failed to download project archive');
-                    }
+
+                    // Wait for user to close dialog
+                    await new Promise(resolve => {
+                        const closeBtn = document.createElement('button');
+                        closeBtn.className = 'btn primary';
+                        closeBtn.textContent = 'Close';
+                        closeBtn.style.marginTop = '20px';
+                        closeBtn.addEventListener('click', () => {
+                            downloadDialog.remove();
+                            resolve();
+                        });
+                        downloadDialog.querySelector('.download-dialog-content').appendChild(closeBtn);
+                    });
+                } else {
+                    // Single file download
+                    await new Promise(resolve => {
+                        downloadDialog.querySelector('.download-start').addEventListener('click', () => {
+                            downloadDialog.remove();
+                            resolve();
+                        });
+                    });
                     
-                    const blob = await zipResponse.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = data.data.zipFile;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    window.URL.revokeObjectURL(url);
-                } catch (error) {
-                    throw new Error('Failed to download archive: ' + error.message);
+                    updateProgress(project, 80, 'Downloading project archive...');
+                    
+                    try {
+                        const zipResponse = await fetch(`${API_BASE_URL}/download-project/${data.data.zipFile}`);
+                        if (!zipResponse.ok) {
+                            throw new Error('Failed to download project archive');
+                        }
+                        
+                        const blob = await zipResponse.blob();
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = data.data.zipFile;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        window.URL.revokeObjectURL(url);
+                    } catch (error) {
+                        throw new Error('Failed to download archive: ' + error.message);
+                    }
+                    updateProgress(project, 100, 'Download complete');
                 }
-                
-                updateProgress(project, 100, 'Download complete');
-                
             } catch (error) {
                 currentDownloadStats.failedProjects.push(project);
                 updateProgress(project, 100, 'Failed - ' + error.message);
