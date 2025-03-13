@@ -343,65 +343,144 @@ app.get('/api/download-tickets', async (req, res) => {
             }
         }
 
-        // Calculate optimal segment size based on total data
+        // Calculate segments needed for attachments
         const SEGMENT_SIZE_LIMIT = 50 * 1024 * 1024; // 50MB per segment
-        const totalSize = totalEstimatedBytes;
-        const segmentCount = Math.ceil(totalSize / SEGMENT_SIZE_LIMIT);
-        const ticketsPerSegment = Math.ceil(ticketsData.length / segmentCount);
+        const attachmentSegments = [];
+        let currentSegment = {
+            files: [],
+            size: 0,
+            number: 1
+        };
+
+        // Group attachments into segments
+        for (const ticket of ticketsData) {
+            for (const attachment of ticket.attachments) {
+                const attachmentSize = parseInt(attachment.size || 0);
+                
+                // If attachment is larger than segment size, split it
+                if (attachmentSize > SEGMENT_SIZE_LIMIT) {
+                    const segmentCount = Math.ceil(attachmentSize / SEGMENT_SIZE_LIMIT);
+                    for (let i = 0; i < segmentCount; i++) {
+                        attachmentSegments.push({
+                            files: [{
+                                ticket: ticket.key,
+                                attachment,
+                                partNumber: i + 1,
+                                totalParts: segmentCount,
+                                startByte: i * SEGMENT_SIZE_LIMIT,
+                                endByte: Math.min((i + 1) * SEGMENT_SIZE_LIMIT, attachmentSize)
+                            }],
+                            size: Math.min(SEGMENT_SIZE_LIMIT, attachmentSize - (i * SEGMENT_SIZE_LIMIT)),
+                            number: attachmentSegments.length + 1
+                        });
+                    }
+                }
+                // If current segment would exceed limit, create new segment
+                else if (currentSegment.size + attachmentSize > SEGMENT_SIZE_LIMIT) {
+                    attachmentSegments.push(currentSegment);
+                    currentSegment = {
+                        files: [{
+                            ticket: ticket.key,
+                            attachment,
+                            partNumber: 1,
+                            totalParts: 1,
+                            startByte: 0,
+                            endByte: attachmentSize
+                        }],
+                        size: attachmentSize,
+                        number: attachmentSegments.length + 1
+                    };
+                }
+                // Add to current segment
+                else {
+                    currentSegment.files.push({
+                        ticket: ticket.key,
+                        attachment,
+                        partNumber: 1,
+                        totalParts: 1,
+                        startByte: 0,
+                        endByte: attachmentSize
+                    });
+                    currentSegment.size += attachmentSize;
+                }
+            }
+        }
+        
+        // Add final segment if not empty
+        if (currentSegment.files.length > 0) {
+            attachmentSegments.push(currentSegment);
+        }
+
+        const totalSegments = attachmentSegments.length;
 
         progress.stage = 'segmenting';
         progress.currentOperation = 'Creating download segments';
-        progress.operationDetails = `Preparing ${segmentCount} segments (50MB each)`;
-        progress.message = 'Organizing files into segments...';
+        progress.operationDetails = `Preparing ${totalSegments} segments (50MB each)`;
+        progress.message = `Organizing ${downloadData.totalAttachments} attachments into ${totalSegments} segments...`;
         sendProgress(progress);
 
-        // Create segments
+        // Create segments with attachment chunks
         const segments = [];
-        for (let i = 0; i < segmentCount; i++) {
-            const segmentStart = i * ticketsPerSegment;
-            const segmentEnd = Math.min((i + 1) * ticketsPerSegment, ticketsData.length);
-            const segmentTickets = ticketsData.slice(segmentStart, segmentEnd);
-            
+        for (const segment of attachmentSegments) {
             const segmentZip = new AdmZip();
-            const segmentSize = segmentTickets.reduce((sum, ticket) => 
-                sum + ticket.attachments.reduce((total, att) => total + parseInt(att.size || 0), 0), 0);
-
-            // Add ticket data for this segment
+            
+            // Add ticket data if not attachments-only mode
             if (downloadType !== 'attachments') {
                 if (fileFormat === 'csv') {
-                    const csvData = convertToCSV(segmentTickets);
-                    segmentZip.addFile(`${projectDir}/tickets_part${i + 1}.csv`, Buffer.from(csvData));
+                    const csvData = convertToCSV(ticketsData);
+                    segmentZip.addFile(`${projectDir}/tickets.csv`, Buffer.from(csvData));
                 } else {
-                    segmentZip.addFile(`${projectDir}/tickets_part${i + 1}.json`, Buffer.from(JSON.stringify(segmentTickets, null, 2)));
+                    segmentZip.addFile(`${projectDir}/tickets.json`, Buffer.from(JSON.stringify(ticketsData, null, 2)));
                 }
             }
 
             // Add attachments for this segment
-            for (const ticket of segmentTickets) {
-                for (const attachment of ticket.attachments) {
-                    const existingFile = zip.getEntry(`${projectDir}/${ticket.key}/${attachment.filename}`);
-                    if (existingFile) {
-                        segmentZip.addFile(`${projectDir}/${ticket.key}/${attachment.filename}`, existingFile.getData());
-                    }
-                }
+            for (const file of segment.files) {
+                const { ticket, attachment, partNumber, totalParts, startByte, endByte } = file;
+                
+                // Get attachment data
+                const attachmentResponse = await axios.get(attachment.content, {
+                    headers: {
+                        ...createJiraHeaders(auth),
+                        Range: `bytes=${startByte}-${endByte - 1}`
+                    },
+                    responseType: 'arraybuffer'
+                });
+
+                // Add to zip with part number if split
+                const filename = totalParts > 1 
+                    ? `${attachment.filename}.part${partNumber}` 
+                    : attachment.filename;
+                    
+                segmentZip.addFile(
+                    `${projectDir}/${ticket}/${filename}`, 
+                    Buffer.from(attachmentResponse.data)
+                );
             }
 
-            // Save segment
-            const segmentFileName = `${projectKey}_${downloadType}_${fileFormat}_part${i + 1}of${segmentCount}_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+            // Save segment with detailed info
+            const segmentFileName = `${projectKey}_attachments_part${segment.number}of${totalSegments}_${(segment.size / (1024 * 1024)).toFixed(1)}MB_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
             const segmentFilePath = path.join(downloadsDir, segmentFileName);
             segmentZip.writeZip(segmentFilePath);
 
             segments.push({
                 fileName: segmentFileName,
-                ticketCount: segmentTickets.length,
-                size: segmentSize,
-                partNumber: i + 1,
-                totalParts: segmentCount
+                fileCount: segment.files.length,
+                size: segment.size,
+                partNumber: segment.number,
+                totalParts: totalSegments,
+                files: segment.files.map(f => ({
+                    name: f.attachment.filename,
+                    ticket: f.ticket,
+                    size: f.endByte - f.startByte,
+                    part: f.partNumber,
+                    totalParts: f.totalParts
+                }))
             });
 
             progress.currentOperation = 'Creating segments';
-            progress.operationDetails = `Created segment ${i + 1} of ${segmentCount} (50MB segments)`;
-            progress.message = `Segment ${i + 1}: ${(segmentSize / (1024 * 1024)).toFixed(1)}MB`;
+            progress.operationDetails = `Created segment ${segment.number} of ${totalSegments} (50MB segments)`;
+            progress.message = `Segment ${segment.number}: ${(segment.size / (1024 * 1024)).toFixed(1)}MB - ${segment.files.length} files`;
             sendProgress(progress);
         }
 
@@ -417,8 +496,20 @@ app.get('/api/download-tickets', async (req, res) => {
             data: {
                 ...downloadData,
                 segments,
-                totalSegments: segmentCount,
-                totalSize: `${(totalSize / (1024 * 1024)).toFixed(1)}MB`,
+                totalSegments,
+                totalSize: `${(totalEstimatedBytes / (1024 * 1024)).toFixed(1)}MB`,
+                segmentDetails: attachmentSegments.map(s => ({
+                    number: s.number,
+                    size: `${(s.size / (1024 * 1024)).toFixed(1)}MB`,
+                    fileCount: s.files.length,
+                    files: s.files.map(f => ({
+                        name: f.attachment.filename,
+                        ticket: f.ticket,
+                        size: `${((f.endByte - f.startByte) / (1024 * 1024)).toFixed(1)}MB`,
+                        part: f.partNumber,
+                        totalParts: f.totalParts
+                    }))
+                })),
                 segmentSize: '50MB'
             }
         });

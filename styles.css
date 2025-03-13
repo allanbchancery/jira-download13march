@@ -402,27 +402,80 @@ input:focus {
 
 .segment-item {
     background: var(--background-color);
-    padding: 1rem;
+    padding: 1.5rem;
     border-radius: 8px;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    margin-bottom: 1.5rem;
+    box-shadow: 0 1px 3px var(--shadow-color);
+}
+
+.segment-header {
+    display: flex;
+    justify-content: space-between;
     align-items: center;
-    gap: 1rem;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color);
 }
 
-.segment-item p {
-    margin: 0;
-    font-size: 0.875rem;
-}
-
-.segment-item p:first-child {
+.segment-header h4 {
     color: var(--primary-color);
-    font-weight: 500;
+    font-size: 1.1rem;
+    margin: 0;
 }
 
-.segment-item .btn {
+.segment-header p {
+    color: var(--secondary-color);
+    font-size: 0.9rem;
     margin: 0;
-    grid-column: 1 / -1;
+}
+
+.segment-files {
+    margin-bottom: 1.5rem;
+    max-height: 200px;
+    overflow-y: auto;
+    padding-right: 1rem;
+}
+
+.file-info {
+    padding: 0.75rem;
+    background: var(--card-background);
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.file-name {
+    font-weight: 500;
+    color: var(--text-color);
+}
+
+.file-details {
+    font-size: 0.875rem;
+    color: var(--secondary-color);
+}
+
+.segment-summary {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    color: var(--secondary-color);
+    font-size: 0.9rem;
+}
+
+.btn.success {
+    background-color: var(--success-color);
+    color: white;
+    border: none;
+}
+
+.btn.error {
+    background-color: var(--error-color);
+    color: white;
+    border: none;
 }
 
 @media (max-width: 768px) {

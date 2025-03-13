@@ -418,18 +418,34 @@ downloadBtn.addEventListener('click', async () => {
                         </ul>
                         ${data.data.segments ? `
                             <div class="segments-info">
-                                <p>Download will be split into ${data.data.totalSegments} segments:</p>
+                                <p>Download split into ${data.data.totalSegments} segments (50MB each):</p>
                                 <div class="segments-list">
-                                    ${data.data.segments.map(segment => `
+                                    ${data.data.segmentDetails.map(segment => `
                                         <div class="segment-item">
-                                            <p>Part ${segment.partNumber} of ${segment.totalParts}</p>
-                                            <p>Size: ${(segment.size / (1024 * 1024)).toFixed(1)}MB</p>
-                                            <p>Tickets: ${segment.ticketCount}</p>
-                                            <button class="btn secondary download-segment" data-filename="${segment.fileName}">
-                                                Download Part ${segment.partNumber}
+                                            <div class="segment-header">
+                                                <h4>Segment ${segment.number} of ${data.data.totalSegments}</h4>
+                                                <p>Size: ${segment.size} (${segment.fileCount} files)</p>
+                                            </div>
+                                            <div class="segment-files">
+                                                ${segment.files.map(file => `
+                                                    <div class="file-info">
+                                                        <span class="file-name">${file.name}</span>
+                                                        <span class="file-details">
+                                                            Ticket: ${file.ticket} | Size: ${file.size}
+                                                            ${file.totalParts > 1 ? ` | Part ${file.part}/${file.totalParts}` : ''}
+                                                        </span>
+                                                    </div>
+                                                `).join('')}
+                                            </div>
+                                            <button class="btn secondary download-segment" data-filename="${data.data.segments[segment.number - 1].fileName}">
+                                                Download Segment ${segment.number}
                                             </button>
                                         </div>
                                     `).join('')}
+                                </div>
+                                <div class="segment-summary">
+                                    <p>Total Size: ${data.data.totalSize}</p>
+                                    <p>Total Files: ${data.data.totalAttachments}</p>
                                 </div>
                             </div>
                         ` : `
