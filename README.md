@@ -15,11 +15,11 @@ A user-friendly web application to download Jira tickets, comments, and attachme
   - API key never stored locally
   - Automatic session management
 
-- **Download Capabilities**
-  - Download multiple projects simultaneously
-  - Fetch all tickets with pagination
-  - Include all comments and attachments
-  - Organized zip file structure
+- **Smart Download Management**
+  - Automatic 50MB segmentation for large downloads
+  - Individual segment progress tracking
+  - Detailed file information per segment
+  - Download status indicators for each segment
 
 - **Progress Tracking**
   - Real-time progress updates
@@ -31,7 +31,7 @@ A user-friendly web application to download Jira tickets, comments, and attachme
   - Connection loss detection
   - Automatic retry mechanism
   - Detailed error messages
-  - Per-project error tracking
+  - Per-segment error tracking
 
 ## Installation
 
@@ -63,25 +63,56 @@ npm run dev
 2. **Project Selection**
    - Select one or more projects to download
    - View project details before downloading
-   - Choose download location for each project
+   - Choose download options (format, content type)
 
 3. **Download Process**
    - Monitor real-time progress for each project
-   - View detailed statistics during download
-   - Cancel downloads if needed
-   - Generate download reports
+   - View segment information and file lists
+   - Download segments individually
+   - Track download status per segment
 
 4. **Output Structure**
 ```
-ProjectKey/
-├── tickets.json (contains all ticket data and comments)
+ProjectKey_part1of3_50MB/
+├── tickets.json (contains ticket data and comments)
 └── TicketKey/
     ├── attachment1.pdf
+    ├── large_file.zip.part1
+    └── ...
+
+ProjectKey_part2of3_50MB/
+├── tickets.json
+└── TicketKey/
+    ├── large_file.zip.part2
+    └── ...
+
+ProjectKey_part3of3_50MB/
+├── tickets.json
+└── TicketKey/
     ├── attachment2.jpg
     └── ...
 ```
 
 ## Features in Detail
+
+### Segmented Downloads
+- **Automatic Segmentation**
+  - 50MB size limit per segment
+  - Smart file splitting for large attachments
+  - Organized segment structure
+  - Clear segment labeling
+
+- **Segment Information**
+  - Total number of segments
+  - Files contained in each segment
+  - Size information per segment
+  - Part numbers for split files
+
+- **Download Controls**
+  - Individual segment downloads
+  - Download status tracking
+  - Success/failure indicators
+  - Retry options for failed segments
 
 ### Progress Tracking
 - **Ticket Progress**
@@ -97,7 +128,7 @@ ProjectKey/
 - **Size Information**
   - Total download size
   - Current download progress
-  - Per-attachment size tracking
+  - Per-segment size tracking
 
 ### Error Handling
 - **Connection Issues**
@@ -106,7 +137,7 @@ ProjectKey/
   - Detailed error reporting
 
 - **Download Failures**
-  - Per-file error tracking
+  - Per-segment error tracking
   - Retry mechanisms
   - Detailed failure logs
 
@@ -127,11 +158,11 @@ The application is built with:
 ### Project Structure
 ```
 jira-downloader/
-├── index.html
-├── styles.css
-├── script.js
-├── server.js
-└── downloads/     # Generated on first use
+├── index.html      # Frontend interface
+├── styles.css      # Styling
+├── script.js       # Frontend logic
+├── server.js       # Backend API
+└── downloads/      # Generated on first use
 ```
 
 ## Contributing

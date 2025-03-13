@@ -243,61 +243,43 @@ app.get('/api/download-tickets', async (req, res) => {
                         updateTimeEstimates();
                         sendProgress(progress);
 
-                        // Download attachment with proper chunking
+                        // Download attachment in chunks using Range header
                         const attachmentPath = `${projectDir}/${issue.key}/${attachment.filename}`;
                         const chunkSize = 50 * 1024 * 1024; // 50MB chunks
+                        const totalChunks = Math.ceil(attachment.size / chunkSize);
                         let downloadedSize = 0;
-                        let currentChunkSize = 0;
-                        let currentChunk = [];
-                        let chunkNumber = 1;
 
-                        const attachmentResponse = await axios.get(attachment.content, {
-                            headers: createJiraHeaders(auth),
-                            responseType: 'stream'
-                        });
+                        for (let chunkNumber = 0; chunkNumber < totalChunks; chunkNumber++) {
+                            const start = chunkNumber * chunkSize;
+                            const end = Math.min(start + chunkSize, attachment.size) - 1;
 
-                        await new Promise((resolve, reject) => {
-                            attachmentResponse.data.on('data', (chunk) => {
-                                currentChunk.push(chunk);
-                                currentChunkSize += chunk.length;
-                                downloadedSize += chunk.length;
+                            try {
+                                // Download chunk
+                                const chunkResponse = await axios.get(attachment.content, {
+                                    headers: {
+                                        ...createJiraHeaders(auth),
+                                        Range: `bytes=${start}-${end}`
+                                    },
+                                    responseType: 'arraybuffer'
+                                });
 
                                 // Update progress
+                                downloadedSize += chunkResponse.data.length;
                                 progress.message = `Downloading: ${attachment.filename} (${(downloadedSize / (1024 * 1024)).toFixed(1)}MB)`;
-                                progress.operationDetails = `Part ${chunkNumber} - ${(downloadedSize / attachment.size * 100).toFixed(1)}%`;
+                                progress.operationDetails = `Part ${chunkNumber + 1} of ${totalChunks} - ${(downloadedSize / attachment.size * 100).toFixed(1)}%`;
                                 sendProgress(progress);
 
-                                // If current chunk reaches 50MB, save it
-                                if (currentChunkSize >= chunkSize) {
-                                    const chunkData = Buffer.concat(currentChunk);
-                                    const chunkPath = `${attachmentPath}.part${chunkNumber}`;
-                                    zip.addFile(chunkPath, chunkData);
-                                    
-                                    // Reset chunk tracking
-                                    currentChunk = [];
-                                    currentChunkSize = 0;
-                                    chunkNumber++;
-                                }
-                            });
+                                // Save chunk
+                                const chunkPath = totalChunks > 1 
+                                    ? `${attachmentPath}.part${chunkNumber + 1}` 
+                                    : attachmentPath;
+                                zip.addFile(chunkPath, Buffer.from(chunkResponse.data));
 
-                            attachmentResponse.data.on('end', () => {
-                                try {
-                                    // Save final chunk if any data remains
-                                    if (currentChunk.length > 0) {
-                                        const finalChunkData = Buffer.concat(currentChunk);
-                                        const finalChunkPath = `${attachmentPath}.part${chunkNumber}`;
-                                        zip.addFile(finalChunkPath, finalChunkData);
-                                    }
-                                    resolve();
-                                } catch (error) {
-                                    reject(error);
-                                }
-                            });
-
-                            attachmentResponse.data.on('error', (error) => {
-                                reject(error);
-                            });
-                        });
+                            } catch (error) {
+                                console.error(`Failed to download chunk ${chunkNumber + 1} of ${attachment.filename}: ${error.message}`);
+                                throw error;
+                            }
+                        }
                         
                         ticket.attachments.push({
                             filename: attachment.filename,
