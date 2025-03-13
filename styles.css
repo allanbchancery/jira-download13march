@@ -182,6 +182,95 @@ input:focus {
     margin-bottom: 1.5rem;
 }
 
+.download-options {
+    margin: 1.5rem 0;
+}
+
+.download-options h3 {
+    margin-bottom: 1.5rem;
+    color: var(--text-color);
+}
+
+.options-section {
+    margin-bottom: 2rem;
+}
+
+.options-section:last-child {
+    margin-bottom: 0;
+}
+
+.options-section h4 {
+    margin-bottom: 1rem;
+    color: var(--secondary-color);
+    font-size: 1rem;
+}
+
+.options-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+}
+
+.option-item {
+    position: relative;
+    cursor: pointer;
+}
+
+.option-item input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    width: 100%;
+    height: 100%;
+    cursor: pointer;
+}
+
+.option-content {
+    background: var(--card-background);
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    padding: 1.5rem;
+    text-align: center;
+    transition: all 0.2s ease;
+}
+
+.option-content i {
+    font-size: 1.5rem;
+    color: var(--primary-color);
+    margin-bottom: 0.5rem;
+}
+
+.option-content span {
+    display: block;
+    font-weight: 500;
+    margin-bottom: 0.25rem;
+}
+
+.option-content small {
+    display: block;
+    color: var(--secondary-color);
+    font-size: 0.875rem;
+}
+
+.option-item input[type="radio"]:checked + .option-content {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(0, 82, 204, 0.2);
+}
+
+.option-item:hover .option-content {
+    border-color: var(--primary-color);
+}
+
+@media (max-width: 768px) {
+    .options-grid {
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+    }
+
+    .options-section {
+        margin-bottom: 1.5rem;
+    }
+}
+
 .project-item {
     display: flex;
     align-items: center;
@@ -318,6 +407,55 @@ input:focus {
     font-size: 0.875rem;
 }
 
+.time-stats {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.875rem;
+}
+
+.time-stats div {
+    background: var(--card-background);
+    padding: 0.5rem;
+    border-radius: 4px;
+    box-shadow: 0 1px 2px var(--shadow-color);
+}
+
+.time-stats span {
+    display: block;
+    color: var(--primary-color);
+    font-weight: 500;
+    margin-top: 0.25rem;
+}
+
+.operation-details {
+    background: var(--card-background);
+    padding: 0.75rem;
+    border-radius: 4px;
+    box-shadow: 0 1px 2px var(--shadow-color);
+    margin-bottom: 0.5rem;
+}
+
+.current-operation {
+    margin-bottom: 0.5rem;
+}
+
+.operation-text {
+    color: var(--text-color);
+    font-weight: 500;
+}
+
+.operation-status {
+    font-size: 0.875rem;
+    color: var(--secondary-color);
+}
+
+.status-text {
+    display: block;
+    margin-top: 0.25rem;
+}
+
 .progress-stats div {
     background: var(--card-background);
     padding: 0.5rem;
@@ -346,7 +484,8 @@ input:focus {
 }
 
 @media (max-width: 768px) {
-    .progress-stats {
+    .progress-stats,
+    .time-stats {
         grid-template-columns: 1fr;
         gap: 0.5rem;
     }

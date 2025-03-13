@@ -56,13 +56,66 @@
                     <!-- Projects will be populated here -->
                 </div>
                 
-                <div class="download-controls">
-                    <button id="downloadBtn" class="btn primary" disabled>
-                        <span class="btn-text">Download Selected</span>
-                        <span class="spinner hidden"></span>
-                    </button>
-                    <button id="cancelBtn" class="btn secondary hidden">Cancel</button>
+            <div class="download-options">
+                <h3>Download Options</h3>
+                <div class="options-section">
+                    <h4>Content Type</h4>
+                    <div class="options-grid">
+                        <label class="option-item">
+                            <input type="radio" name="downloadType" value="all" checked>
+                            <div class="option-content">
+                                <i class="fas fa-archive"></i>
+                                <span>Everything</span>
+                                <small>Tickets, comments & attachments</small>
+                            </div>
+                        </label>
+                        <label class="option-item">
+                            <input type="radio" name="downloadType" value="tickets">
+                            <div class="option-content">
+                                <i class="fas fa-ticket-alt"></i>
+                                <span>Tickets Only</span>
+                                <small>Tickets & comments, no attachments</small>
+                            </div>
+                        </label>
+                        <label class="option-item">
+                            <input type="radio" name="downloadType" value="attachments">
+                            <div class="option-content">
+                                <i class="fas fa-paperclip"></i>
+                                <span>Attachments Only</span>
+                                <small>Only download attachments</small>
+                            </div>
+                        </label>
+                    </div>
                 </div>
+                <div class="options-section">
+                    <h4>File Format</h4>
+                    <div class="options-grid">
+                        <label class="option-item">
+                            <input type="radio" name="fileFormat" value="json" checked>
+                            <div class="option-content">
+                                <i class="fas fa-code"></i>
+                                <span>JSON</span>
+                                <small>Structured data format</small>
+                            </div>
+                        </label>
+                        <label class="option-item">
+                            <input type="radio" name="fileFormat" value="csv">
+                            <div class="option-content">
+                                <i class="fas fa-table"></i>
+                                <span>CSV</span>
+                                <small>Spreadsheet compatible</small>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div class="download-controls">
+                <button id="downloadBtn" class="btn primary" disabled>
+                    <span class="btn-text">Download Selected</span>
+                    <span class="spinner hidden"></span>
+                </button>
+                <button id="cancelBtn" class="btn secondary hidden">Cancel</button>
+            </div>
             </div>
 
             <div class="card hidden" id="downloadProgress">

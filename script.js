@@ -294,14 +294,27 @@ downloadBtn.addEventListener('click', async () => {
                         <div>Size: <span class="download-size">0 MB</span></div>
                         <div>Stage: <span class="current-stage">Initializing...</span></div>
                     </div>
-                    <div class="current-operation">
-                        <span class="operation-text">Preparing download...</span>
+                    <div class="time-stats">
+                        <div>Time Elapsed: <span class="time-elapsed">0s</span></div>
+                        <div>Remaining: <span class="time-remaining">Calculating...</span></div>
+                    </div>
+                    <div class="operation-details">
+                        <div class="current-operation">
+                            <span class="operation-text">Preparing download...</span>
+                        </div>
+                        <div class="operation-status">
+                            <span class="status-text"></span>
+                        </div>
                     </div>
                 `;
                 projectProgress.appendChild(progressDetails);
 
+                // Get selected options
+                const downloadType = document.querySelector('input[name="downloadType"]:checked').value;
+                const fileFormat = document.querySelector('input[name="fileFormat"]:checked').value;
+                
                 // Set up event source for progress updates
-                const eventSource = new EventSource(`${API_BASE_URL}/download-tickets?username=${encodeURIComponent(usernameInput.value)}&apiKey=${encodeURIComponent(apiKeyInput.value)}&projectKey=${encodeURIComponent(project)}`);
+                const eventSource = new EventSource(`${API_BASE_URL}/download-tickets?username=${encodeURIComponent(usernameInput.value)}&apiKey=${encodeURIComponent(apiKeyInput.value)}&projectKey=${encodeURIComponent(project)}&downloadType=${downloadType}&fileFormat=${fileFormat}`);
 
                 
                 eventSource.onmessage = (event) => {
@@ -320,9 +333,22 @@ downloadBtn.addEventListener('click', async () => {
                     const stats = progressDetails.querySelector('.progress-stats');
                     const operation = progressDetails.querySelector('.operation-text');
                     
+                    // Update stats
                     stats.querySelector('.ticket-count').textContent = `${data.currentIssue} / ${data.totalIssues}`;
                     stats.querySelector('.download-size').textContent = data.downloadedSize;
                     stats.querySelector('.current-stage').textContent = data.stage;
+                    
+                    // Update time information
+                    const timeStats = progressDetails.querySelector('.time-stats');
+                    timeStats.querySelector('.time-elapsed').textContent = data.timeElapsed;
+                    timeStats.querySelector('.time-remaining').textContent = data.estimatedTimeRemaining;
+                    
+                    // Update operation details
+                    const operationDetails = progressDetails.querySelector('.operation-details');
+                    operationDetails.querySelector('.operation-text').textContent = data.currentOperation;
+                    operationDetails.querySelector('.status-text').textContent = data.operationDetails;
+                    
+                    // Update message
                     operation.textContent = data.message;
                     
                     // Calculate overall progress
@@ -379,8 +405,10 @@ downloadBtn.addEventListener('click', async () => {
                 downloadDialog.className = 'download-dialog';
                 downloadDialog.innerHTML = `
                     <div class="download-dialog-content">
-                        <h3>Download Location</h3>
+                        <h3>Download Ready</h3>
                         <p>Project: ${project}</p>
+                        <p>Download Type: ${downloadType === 'all' ? 'Everything' : downloadType === 'tickets' ? 'Tickets Only' : 'Attachments Only'}</p>
+                        <p>File Format: ${fileFormat.toUpperCase()}</p>
                         <p>Contains:</p>
                         <ul>
                             <li>${data.data.tickets.length} tickets</li>

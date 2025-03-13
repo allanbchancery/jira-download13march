@@ -24,6 +24,34 @@ const createJiraHeaders = (auth) => ({
     'Content-Type': 'application/json'
 });
 
+// Utility function to convert ticket data to CSV
+function convertToCSV(tickets) {
+    // Define CSV headers
+    const headers = [
+        'Key',
+        'Summary',
+        'Description',
+        'Comment Count',
+        'Attachment Count',
+        'Comments',
+        'Attachments'
+    ];
+
+    // Convert tickets to CSV rows
+    const rows = tickets.map(ticket => [
+        ticket.key,
+        `"${(ticket.summary || '').replace(/"/g, '""')}"`,
+        `"${(ticket.description || '').replace(/"/g, '""')}"`,
+        ticket.comments.length,
+        ticket.attachments.length,
+        `"${ticket.comments.map(c => c.body.replace(/"/g, '""')).join('\\n')}"`,
+        ticket.attachments.map(a => a.filename).join(', ')
+    ]);
+
+    // Combine headers and rows
+    return [headers, ...rows].map(row => row.join(',')).join('\n');
+}
+
 // Test connection endpoint
 app.post('/api/test-connection', async (req, res) => {
     const { username, apiKey } = req.body;
@@ -68,14 +96,22 @@ if (!fs.existsSync(downloadsDir)) {
 
 // Download tickets endpoint
 app.get('/api/download-tickets', async (req, res) => {
-    // Set headers for SSE
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    const { username, apiKey, projectKey } = req.query;
+    const { username, apiKey, projectKey, downloadType = 'all', fileFormat = 'json' } = req.query;
     const auth = Buffer.from(`${username}:${apiKey}`).toString('base64');
-    
+
     try {
+        // Set headers for SSE
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive'
+        });
+
+        // Helper function to send SSE
+        const sendProgress = (data) => {
+            res.write(`data: ${JSON.stringify(data)}\n\n`);
+        };
+    
         // Get project info and total number of issues
         const jql = `project = ${projectKey}`;
         const [projectResponse, countResponse] = await Promise.all([
@@ -94,6 +130,7 @@ app.get('/api/download-tickets', async (req, res) => {
         const totalIssues = countResponse.data.total;
         const batchSize = 100;
         const issues = [];
+        const startTime = Date.now();
         const progress = {
             stage: 'init',
             message: 'Initializing download...',
@@ -103,12 +140,24 @@ app.get('/api/download-tickets', async (req, res) => {
             totalBatches: Math.ceil(totalIssues / batchSize),
             currentBatch: 0,
             estimatedSize: '0 MB',
-            downloadedSize: '0 MB'
+            downloadedSize: '0 MB',
+            timeElapsed: '0s',
+            estimatedTimeRemaining: 'Calculating...',
+            currentOperation: 'Preparing download...',
+            operationDetails: ''
         };
 
-        // Helper function to send SSE
-        const sendProgress = (data) => {
-            res.write(`data: ${JSON.stringify(data)}\n\n`);
+        // Helper function to update time estimates
+        const updateTimeEstimates = () => {
+            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            progress.timeElapsed = `${elapsed}s`;
+            
+            if (progress.currentIssue > 0) {
+                const issuesPerSecond = progress.currentIssue / elapsed;
+                const remainingIssues = totalIssues - progress.currentIssue;
+                const estimatedSeconds = Math.floor(remainingIssues / issuesPerSecond);
+                progress.estimatedTimeRemaining = `${estimatedSeconds}s`;
+            }
         };
 
         // Send initial progress
@@ -118,7 +167,10 @@ app.get('/api/download-tickets', async (req, res) => {
         for (let startAt = 0; startAt < totalIssues; startAt += batchSize) {
             progress.stage = 'fetching';
             progress.currentBatch++;
+            progress.currentOperation = 'Fetching tickets';
+            progress.operationDetails = `Batch ${progress.currentBatch} of ${progress.totalBatches}`;
             progress.message = `Fetching tickets ${startAt + 1} to ${Math.min(startAt + batchSize, totalIssues)} of ${totalIssues}...`;
+            updateTimeEstimates();
             sendProgress(progress);
 
             const response = await axios.post('https://thehut.atlassian.net/rest/api/2/search', {
@@ -136,6 +188,7 @@ app.get('/api/download-tickets', async (req, res) => {
             progress.batchProgress = (issues.length / totalIssues) * 100;
             sendProgress(progress);
         }
+
         const downloadData = {
             projectInfo,
             tickets: [],
@@ -156,9 +209,13 @@ app.get('/api/download-tickets', async (req, res) => {
         let totalEstimatedBytes = 0;
         
         for (const [index, issue] of issues.entries()) {
+            progress.currentOperation = 'Processing tickets';
+            progress.operationDetails = `Ticket ${index + 1} of ${issues.length}`;
             progress.message = `Processing ticket ${index + 1} of ${issues.length}...`;
+            updateTimeEstimates();
             progress.currentIssue = index + 1;
             res.write(`data: ${JSON.stringify(progress)}\n\n`);
+            
             const ticket = {
                 key: issue.key,
                 summary: issue.fields.summary,
@@ -167,20 +224,23 @@ app.get('/api/download-tickets', async (req, res) => {
                 attachments: []
             };
 
-            // Get comments
-            if (issue.fields.comment) {
+            // Get comments if not attachments-only mode
+            if (downloadType !== 'attachments' && issue.fields.comment) {
                 ticket.comments = issue.fields.comment.comments;
                 downloadData.totalComments += ticket.comments.length;
             }
 
-            // Get attachments and estimate size
-            if (issue.fields.attachment) {
+            // Get attachments if not tickets-only mode
+            if (downloadType !== 'tickets' && issue.fields.attachment) {
                 for (const attachment of issue.fields.attachment) {
                     try {
                         // Add attachment size to total estimate
                         totalEstimatedBytes += parseInt(attachment.size || 0);
                         
-                        progress.message = `Downloading attachment: ${attachment.filename}`;
+                        progress.currentOperation = 'Downloading attachments';
+                        progress.operationDetails = `${downloadData.totalAttachments + 1} of ${issue.fields.attachment.length}`;
+                        progress.message = `Downloading: ${attachment.filename}`;
+                        updateTimeEstimates();
                         sendProgress(progress);
 
                         const attachmentResponse = await axios.get(attachment.content, {
@@ -209,24 +269,41 @@ app.get('/api/download-tickets', async (req, res) => {
                 }
             }
 
-            ticketsData.push(ticket);
-            downloadData.tickets.push(ticket);
+            // Add ticket data if not attachments-only mode
+            if (downloadType !== 'attachments') {
+                ticketsData.push(ticket);
+                downloadData.tickets.push(ticket);
+            }
         }
 
-        // Add ticket data to zip
-        progress.stage = 'finalizing';
-        progress.message = 'Creating zip file...';
-        sendProgress(progress);
+        // Add ticket data to zip if not attachments-only mode
+        if (downloadType !== 'attachments') {
+            progress.stage = 'finalizing';
+            progress.currentOperation = 'Finalizing';
+            progress.operationDetails = 'Creating data file';
+            progress.message = `Converting to ${fileFormat.toUpperCase()}...`;
+            updateTimeEstimates();
+            sendProgress(progress);
 
-        downloadData.estimatedSize = `${(totalEstimatedBytes / (1024 * 1024)).toFixed(1)} MB`;
-        zip.addFile(`${projectDir}/tickets.json`, Buffer.from(JSON.stringify(ticketsData, null, 2)));
+            downloadData.estimatedSize = `${(totalEstimatedBytes / (1024 * 1024)).toFixed(1)} MB`;
+            
+            // Add ticket data in selected format
+            if (fileFormat === 'csv') {
+                const csvData = convertToCSV(ticketsData);
+                zip.addFile(`${projectDir}/tickets.csv`, Buffer.from(csvData));
+            } else {
+                zip.addFile(`${projectDir}/tickets.json`, Buffer.from(JSON.stringify(ticketsData, null, 2)));
+            }
+        }
 
         // Save zip file
-        const zipFileName = `${projectKey}_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+        const zipFileName = `${projectKey}_${downloadType}_${fileFormat}_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
         const zipFilePath = path.join(downloadsDir, zipFileName);
         zip.writeZip(zipFilePath);
 
         progress.stage = 'complete';
+        progress.currentOperation = 'Complete';
+        progress.operationDetails = `Total time: ${progress.timeElapsed}`;
         progress.message = 'Download ready!';
         sendProgress(progress);
 
@@ -239,11 +316,19 @@ app.get('/api/download-tickets', async (req, res) => {
             }
         });
     } catch (error) {
-        // Send error response
-        sendProgress({
+        console.error('Download error:', error);
+        if (!res.headersSent) {
+            res.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive'
+            });
+        }
+        res.write(`data: ${JSON.stringify({
             success: false,
             error: error.message || 'Failed to download tickets'
-        });
+        })}\n\n`);
+        res.end();
     }
 });
 
