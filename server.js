@@ -129,7 +129,7 @@ app.get('/api/download-tickets', async (req, res) => {
         const projectInfo = projectResponse.data;
         const totalIssues = countResponse.data.total;
         const batchSize = 100;
-        const issues = [];
+        let issues = [];
         const startTime = Date.now();
         const progress = {
             stage: 'init',
@@ -163,30 +163,52 @@ app.get('/api/download-tickets', async (req, res) => {
         // Send initial progress
         sendProgress(progress);
 
-        // Fetch all issues in batches
-        for (let startAt = 0; startAt < totalIssues; startAt += batchSize) {
+        // Fetch issues based on download type
+        if (downloadType === 'attachments') {
+            // For attachments only, just get attachment info
             progress.stage = 'fetching';
-            progress.currentBatch++;
-            progress.currentOperation = 'Fetching tickets';
-            progress.operationDetails = `Batch ${progress.currentBatch} of ${progress.totalBatches}`;
-            progress.message = `Fetching tickets ${startAt + 1} to ${Math.min(startAt + batchSize, totalIssues)} of ${totalIssues}...`;
-            updateTimeEstimates();
+            progress.currentOperation = 'Fetching attachment info';
+            progress.message = 'Getting attachment information...';
             sendProgress(progress);
 
             const response = await axios.post('https://thehut.atlassian.net/rest/api/2/search', {
                 jql,
-                startAt,
-                maxResults: batchSize,
-                fields: ['summary', 'description', 'comment', 'attachment'],
-                expand: ['comments']  // Ensure we get all comments
+                maxResults: totalIssues,
+                fields: ['attachment']
             }, {
                 headers: createJiraHeaders(auth)
             });
 
-            issues.push(...response.data.issues);
+            issues = response.data.issues;
             progress.currentIssue = issues.length;
-            progress.batchProgress = (issues.length / totalIssues) * 100;
+            progress.batchProgress = 100;
             sendProgress(progress);
+        } else {
+            // Fetch all issues in batches for other download types
+            for (let startAt = 0; startAt < totalIssues; startAt += batchSize) {
+                progress.stage = 'fetching';
+                progress.currentBatch++;
+                progress.currentOperation = 'Fetching tickets';
+                progress.operationDetails = `Batch ${progress.currentBatch} of ${progress.totalBatches}`;
+                progress.message = `Fetching tickets ${startAt + 1} to ${Math.min(startAt + batchSize, totalIssues)} of ${totalIssues}...`;
+                updateTimeEstimates();
+                sendProgress(progress);
+
+                const response = await axios.post('https://thehut.atlassian.net/rest/api/2/search', {
+                    jql,
+                    startAt,
+                    maxResults: batchSize,
+                    fields: ['summary', 'description', 'comment', 'attachment'],
+                    expand: ['comments']  // Ensure we get all comments
+                }, {
+                    headers: createJiraHeaders(auth)
+                });
+
+                issues.push(...response.data.issues);
+                progress.currentIssue = issues.length;
+                progress.batchProgress = (issues.length / totalIssues) * 100;
+                sendProgress(progress);
+            }
         }
 
         const downloadData = {
@@ -335,8 +357,10 @@ app.get('/api/download-tickets', async (req, res) => {
         };
 
         // Group attachments into segments
-        for (const ticket of ticketsData) {
-            for (const attachment of ticket.attachments) {
+        for (const issue of issues) {
+            if (!issue.fields.attachment) continue;
+            
+            for (const attachment of issue.fields.attachment) {
                 const attachmentSize = parseInt(attachment.size || 0);
                 
                 // If attachment is larger than segment size, split it
@@ -345,7 +369,7 @@ app.get('/api/download-tickets', async (req, res) => {
                     for (let i = 0; i < segmentCount; i++) {
                         attachmentSegments.push({
                             files: [{
-                                ticket: ticket.key,
+                                ticket: issue.key,
                                 attachment,
                                 partNumber: i + 1,
                                 totalParts: segmentCount,
@@ -362,7 +386,7 @@ app.get('/api/download-tickets', async (req, res) => {
                     attachmentSegments.push(currentSegment);
                     currentSegment = {
                         files: [{
-                            ticket: ticket.key,
+                            ticket: issue.key,
                             attachment,
                             partNumber: 1,
                             totalParts: 1,
@@ -376,7 +400,7 @@ app.get('/api/download-tickets', async (req, res) => {
                 // Add to current segment
                 else {
                     currentSegment.files.push({
-                        ticket: ticket.key,
+                        ticket: issue.key,
                         attachment,
                         partNumber: 1,
                         totalParts: 1,
