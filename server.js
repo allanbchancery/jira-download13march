@@ -122,15 +122,17 @@ app.get('/api/download-tickets', async (req, res) => {
             progress.timeElapsed = `${elapsed}s`;
         };
 
-        // Send initial progress
+        // Send initial progress with download type info
+        progress.currentOperation = downloadType === 'attachments' ? 'Downloading Attachments' : 'Downloading All Data';
         sendProgress(progress);
 
         // Fetch issues based on download type
         if (downloadType === 'attachments') {
             // For attachments only, just get attachment info
             progress.stage = 'fetching';
-            progress.currentOperation = 'Fetching attachment info';
-            progress.message = 'Getting attachment information...';
+            progress.currentOperation = 'Scanning Project';
+            progress.message = 'Finding attachments...';
+            progress.operationDetails = `Project: ${projectKey}`;
             sendProgress(progress);
 
             const response = await axios.post('https://thehut.atlassian.net/rest/api/2/search', {
@@ -269,9 +271,9 @@ app.get('/api/download-tickets', async (req, res) => {
                             currentSegment.size += attachmentSize;
                         }
 
-                        progress.currentOperation = 'Building segments';
-                        progress.operationDetails = `Segment ${attachmentSegments.length + 1}`;
-                        progress.message = `Adding: ${attachment.filename} (${(attachmentSize / (1024 * 1024)).toFixed(1)}MB)`;
+            progress.currentOperation = 'Processing Files';
+            progress.operationDetails = `File ${attachmentSegments.length + 1} of ${totalAttachmentCount}`;
+            progress.message = `Processing: ${attachment.filename} (${(attachmentSize / (1024 * 1024)).toFixed(1)}MB)`;
                         sendProgress(progress);
                     } catch (error) {
                         console.error(`Error processing attachment: ${attachment.filename}`, error);
@@ -359,9 +361,10 @@ app.get('/api/download-tickets', async (req, res) => {
                 }))
             });
 
-            progress.currentOperation = 'Downloading segment';
-            progress.operationDetails = `Segment ${segment.number} of ${totalSegments}`;
+            progress.currentOperation = 'Downloading Files';
+            progress.operationDetails = `Part ${segment.number} of ${totalSegments}`;
             progress.message = `Downloading ${segment.files.length} files (${(segment.size / (1024 * 1024)).toFixed(1)}MB)`;
+            progress.currentFile = segment.files[0].attachment.filename;
             sendProgress(progress);
         }
 
