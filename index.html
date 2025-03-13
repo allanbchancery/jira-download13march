@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jira Ticket Downloader</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Jira Ticket Downloader</h1>
+            <p class="subtitle">Download tickets, comments, and attachments from Jira</p>
+        </header>
+
+        <main>
+            <div class="card">
+                <h2>Connection Details</h2>
+                <form id="connectionForm">
+                    <div class="form-group">
+                        <label for="username">
+                            Username
+                            <span class="tooltip" data-tooltip="Enter your Jira username (email address)">
+                                <i class="fas fa-info-circle"></i>
+                            </span>
+                        </label>
+                        <input type="email" id="username" name="username" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="apiKey">
+                            API Key
+                            <span class="tooltip" data-tooltip="Find your API key in Jira account settings">
+                                <i class="fas fa-info-circle"></i>
+                            </span>
+                        </label>
+                        <div class="password-input">
+                            <input type="password" id="apiKey" name="apiKey" required>
+                            <button type="button" class="toggle-password">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <button type="submit" id="connectBtn" class="btn primary">
+                        <span class="btn-text">Connect</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                </form>
+            </div>
+
+            <div class="card hidden" id="projectSelection">
+                <h2>Select Projects</h2>
+                <div class="project-list">
+                    <!-- Projects will be populated here -->
+                </div>
+                
+                <div class="download-controls">
+                    <button id="downloadBtn" class="btn primary" disabled>
+                        <span class="btn-text">Download Selected</span>
+                        <span class="spinner hidden"></span>
+                    </button>
+                    <button id="cancelBtn" class="btn secondary hidden">Cancel</button>
+                </div>
+            </div>
+
+            <div class="card hidden" id="downloadProgress">
+                <h2>Download Progress</h2>
+                <div class="overall-progress">
+                    <div class="progress-label">Overall Progress</div>
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <div class="progress-text">0%</div>
+                </div>
+                
+                <div class="project-progress-list">
+                    <!-- Individual project progress will be shown here -->
+                </div>
+            </div>
+
+            <div class="card hidden" id="downloadSummary">
+                <h2>Download Summary</h2>
+                <div class="summary-stats">
+                    <!-- Summary statistics will be shown here -->
+                </div>
+                <div class="summary-controls">
+                    <button id="downloadReportBtn" class="btn secondary">
+                        <i class="fas fa-download"></i> Download Report
+                    </button>
+                    <button id="newDownloadBtn" class="btn primary">Start New Download</button>
+                </div>
+            </div>
+        </main>
+
+        <div class="help-section">
+            <h3>Need Help?</h3>
+            <div class="faq-list">
+                <details>
+                    <summary>How do I find my API key?</summary>
+                    <div class="faq-content">
+                        <ol>
+                            <li>Log in to your Jira account</li>
+                            <li>Click on your profile picture</li>
+                            <li>Go to Account Settings</li>
+                            <li>Look for Security > API tokens</li>
+                            <li>Create a new token or use an existing one</li>
+                        </ol>
+                    </div>
+                </details>
+                <details>
+                    <summary>Can I download multiple projects at once?</summary>
+                    <div class="faq-content">
+                        <p>Yes! You can select multiple projects by checking the boxes next to each project name. The download will process all selected projects sequentially.</p>
+                    </div>
+                </details>
+                <details>
+                    <summary>What happens if the download fails?</summary>
+                    <div class="faq-content">
+                        <p>If a download fails, the system will:</p>
+                        <ul>
+                            <li>Automatically attempt to reconnect</li>
+                            <li>Resume from where it left off</li>
+                            <li>Show specific error messages for troubleshooting</li>
+                        </ul>
+                    </div>
+                </details>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
