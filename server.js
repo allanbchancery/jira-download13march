@@ -325,23 +325,82 @@ app.get('/api/download-tickets', async (req, res) => {
             }
         }
 
-        // Save zip file
-        const zipFileName = `${projectKey}_${downloadType}_${fileFormat}_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
-        const zipFilePath = path.join(downloadsDir, zipFileName);
-        zip.writeZip(zipFilePath);
+        // Calculate optimal segment size based on total data
+        const SEGMENT_SIZE_LIMIT = 1024 * 1024 * 1024; // 1GB per segment
+        const totalSize = totalEstimatedBytes;
+        const segmentCount = Math.ceil(totalSize / SEGMENT_SIZE_LIMIT);
+        const ticketsPerSegment = Math.ceil(ticketsData.length / segmentCount);
+
+        progress.stage = 'segmenting';
+        progress.currentOperation = 'Creating download segments';
+        progress.operationDetails = `Preparing ${segmentCount} segments`;
+        progress.message = 'Organizing files into segments...';
+        sendProgress(progress);
+
+        // Create segments
+        const segments = [];
+        for (let i = 0; i < segmentCount; i++) {
+            const segmentStart = i * ticketsPerSegment;
+            const segmentEnd = Math.min((i + 1) * ticketsPerSegment, ticketsData.length);
+            const segmentTickets = ticketsData.slice(segmentStart, segmentEnd);
+            
+            const segmentZip = new AdmZip();
+            const segmentSize = segmentTickets.reduce((sum, ticket) => 
+                sum + ticket.attachments.reduce((total, att) => total + parseInt(att.size || 0), 0), 0);
+
+            // Add ticket data for this segment
+            if (downloadType !== 'attachments') {
+                if (fileFormat === 'csv') {
+                    const csvData = convertToCSV(segmentTickets);
+                    segmentZip.addFile(`${projectDir}/tickets_part${i + 1}.csv`, Buffer.from(csvData));
+                } else {
+                    segmentZip.addFile(`${projectDir}/tickets_part${i + 1}.json`, Buffer.from(JSON.stringify(segmentTickets, null, 2)));
+                }
+            }
+
+            // Add attachments for this segment
+            for (const ticket of segmentTickets) {
+                for (const attachment of ticket.attachments) {
+                    const existingFile = zip.getEntry(`${projectDir}/${ticket.key}/${attachment.filename}`);
+                    if (existingFile) {
+                        segmentZip.addFile(`${projectDir}/${ticket.key}/${attachment.filename}`, existingFile.getData());
+                    }
+                }
+            }
+
+            // Save segment
+            const segmentFileName = `${projectKey}_${downloadType}_${fileFormat}_part${i + 1}of${segmentCount}_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
+            const segmentFilePath = path.join(downloadsDir, segmentFileName);
+            segmentZip.writeZip(segmentFilePath);
+
+            segments.push({
+                fileName: segmentFileName,
+                ticketCount: segmentTickets.length,
+                size: segmentSize,
+                partNumber: i + 1,
+                totalParts: segmentCount
+            });
+
+            progress.currentOperation = 'Creating segments';
+            progress.operationDetails = `Created segment ${i + 1} of ${segmentCount}`;
+            progress.message = `Segment ${i + 1}: ${(segmentSize / (1024 * 1024)).toFixed(1)}MB`;
+            sendProgress(progress);
+        }
 
         progress.stage = 'complete';
         progress.currentOperation = 'Complete';
         progress.operationDetails = `Total time: ${progress.timeElapsed}`;
-        progress.message = 'Download ready!';
+        progress.message = 'All segments ready!';
         sendProgress(progress);
 
-        // Send final success response
+        // Send final success response with segment information
         sendProgress({
             success: true,
             data: {
                 ...downloadData,
-                zipFile: zipFileName
+                segments,
+                totalSegments: segmentCount,
+                totalSize: `${(totalSize / (1024 * 1024)).toFixed(1)}MB`
             }
         });
     } catch (error) {

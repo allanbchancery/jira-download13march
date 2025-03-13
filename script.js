@@ -409,13 +409,32 @@ downloadBtn.addEventListener('click', async () => {
                         <p>Project: ${project}</p>
                         <p>Download Type: ${downloadType === 'all' ? 'Everything' : downloadType === 'tickets' ? 'Tickets Only' : 'Attachments Only'}</p>
                         <p>File Format: ${fileFormat.toUpperCase()}</p>
+                        <p>Total Size: ${data.data.totalSize}</p>
                         <p>Contains:</p>
                         <ul>
                             <li>${data.data.tickets.length} tickets</li>
                             <li>${data.data.totalComments} comments</li>
                             <li>${data.data.totalAttachments} attachments</li>
                         </ul>
-                        <button class="btn primary download-start">Download Now</button>
+                        ${data.data.segments ? `
+                            <div class="segments-info">
+                                <p>Download will be split into ${data.data.totalSegments} segments:</p>
+                                <div class="segments-list">
+                                    ${data.data.segments.map(segment => `
+                                        <div class="segment-item">
+                                            <p>Part ${segment.partNumber} of ${segment.totalParts}</p>
+                                            <p>Size: ${(segment.size / (1024 * 1024)).toFixed(1)}MB</p>
+                                            <p>Tickets: ${segment.ticketCount}</p>
+                                            <button class="btn secondary download-segment" data-filename="${segment.fileName}">
+                                                Download Part ${segment.partNumber}
+                                            </button>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        ` : `
+                            <button class="btn primary download-start">Download Now</button>
+                        `}
                     </div>
                 `;
                 document.body.appendChild(downloadDialog);
