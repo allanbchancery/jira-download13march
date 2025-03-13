@@ -525,6 +525,52 @@ input:focus {
     border-top: 1px solid var(--border-color);
 }
 
+.guide-steps {
+    margin: 1.5rem 0 3rem;
+    padding: 1.5rem;
+    background: var(--card-background);
+    border-radius: 8px;
+    box-shadow: 0 2px 4px var(--shadow-color);
+}
+
+.guide-steps h4 {
+    color: var(--primary-color);
+    margin-bottom: 1rem;
+    font-size: 1.1rem;
+}
+
+.guide-steps ol {
+    margin-bottom: 2rem;
+    padding-left: 1.5rem;
+}
+
+.guide-steps ol:last-child {
+    margin-bottom: 0;
+}
+
+.guide-steps li {
+    margin-bottom: 0.75rem;
+}
+
+.guide-steps ul {
+    margin: 0.5rem 0;
+    padding-left: 1.5rem;
+    color: var(--secondary-color);
+}
+
+.guide-steps strong {
+    color: var(--text-color);
+}
+
+.guide-steps pre {
+    background: var(--background-color);
+    padding: 1rem;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-family: monospace;
+    margin: 0.5rem 0;
+}
+
 .faq-list {
     margin-top: 1rem;
 }

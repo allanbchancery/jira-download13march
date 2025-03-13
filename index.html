@@ -148,7 +148,48 @@
         </main>
 
         <div class="help-section">
-            <h3>Need Help?</h3>
+            <h3>Quick Start Guide</h3>
+            <div class="guide-steps">
+                <h4>Step 1: Connect to Jira</h4>
+                <ol>
+                    <li>Enter your Jira email address</li>
+                    <li>Enter your API key (see FAQ below for how to get it)</li>
+                    <li>Click "Connect" to authenticate</li>
+                </ol>
+
+                <h4>Step 2: Select Content</h4>
+                <ol>
+                    <li>Choose one or more projects to download</li>
+                    <li>Select your download type:
+                        <ul>
+                            <li><strong>Everything:</strong> All tickets, comments, and attachments</li>
+                            <li><strong>Tickets Only:</strong> Just tickets and comments</li>
+                            <li><strong>Attachments Only:</strong> Only attached files</li>
+                        </ul>
+                    </li>
+                    <li>Choose your file format:
+                        <ul>
+                            <li><strong>JSON:</strong> Best for data processing or importing to other systems</li>
+                            <li><strong>CSV:</strong> Best for viewing in Excel or spreadsheet software</li>
+                        </ul>
+                    </li>
+                </ol>
+
+                <h4>Step 3: Download</h4>
+                <ol>
+                    <li>Click "Download Selected"</li>
+                    <li>Monitor progress in real-time:
+                        <ul>
+                            <li>See ticket count and download size</li>
+                            <li>Track time remaining</li>
+                            <li>View current operation details</li>
+                        </ul>
+                    </li>
+                    <li>When prompted, choose where to save your files</li>
+                </ol>
+            </div>
+
+            <h3>Frequently Asked Questions</h3>
             <div class="faq-list">
                 <details>
                     <summary>How do I find my API key?</summary>
@@ -177,6 +218,42 @@
                             <li>Resume from where it left off</li>
                             <li>Show specific error messages for troubleshooting</li>
                         </ul>
+                    </div>
+                </details>
+                <details>
+                    <summary>Which file format should I choose?</summary>
+                    <div class="faq-content">
+                        <p>Choose based on your needs:</p>
+                        <ul>
+                            <li><strong>JSON:</strong> Best for:
+                                <ul>
+                                    <li>Importing to other systems</li>
+                                    <li>Preserving data structure</li>
+                                    <li>Programmatic processing</li>
+                                </ul>
+                            </li>
+                            <li><strong>CSV:</strong> Best for:
+                                <ul>
+                                    <li>Opening in Excel</li>
+                                    <li>Quick data analysis</li>
+                                    <li>Sharing with non-technical users</li>
+                                </ul>
+                            </li>
+                        </ul>
+                    </div>
+                </details>
+                <details>
+                    <summary>How are the files organized?</summary>
+                    <div class="faq-content">
+                        <p>Downloaded files are organized as follows:</p>
+                        <pre>
+ProjectKey/
+├── tickets.[json|csv]  # Ticket data in chosen format
+└── TicketKey/         # Folder for each ticket
+    ├── attachment1.pdf
+    ├── attachment2.jpg
+    └── ...
+                        </pre>
                     </div>
                 </details>
             </div>
