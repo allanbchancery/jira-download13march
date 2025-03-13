@@ -243,14 +243,43 @@ app.get('/api/download-tickets', async (req, res) => {
                         updateTimeEstimates();
                         sendProgress(progress);
 
+                        // Download attachment in chunks
+                        const attachmentPath = `${projectDir}/${issue.key}/${attachment.filename}`;
+                        const chunkSize = 100 * 1024 * 1024; // 100MB chunks
+                        let downloadedSize = 0;
+                        const chunks = [];
+
                         const attachmentResponse = await axios.get(attachment.content, {
                             headers: createJiraHeaders(auth),
-                            responseType: 'arraybuffer'
+                            responseType: 'stream'
                         });
 
-                        // Add attachment to zip
-                        const attachmentPath = `${projectDir}/${issue.key}/${attachment.filename}`;
-                        zip.addFile(attachmentPath, Buffer.from(attachmentResponse.data, 'binary'));
+                        await new Promise((resolve, reject) => {
+                            attachmentResponse.data.on('data', (chunk) => {
+                                chunks.push(chunk);
+                                downloadedSize += chunk.length;
+
+                                // Update progress for this chunk
+                                progress.message = `Downloading: ${attachment.filename} (${(downloadedSize / (1024 * 1024)).toFixed(1)}MB)`;
+                                progress.operationDetails = `Chunk ${chunks.length} - ${(downloadedSize / attachment.size * 100).toFixed(1)}%`;
+                                sendProgress(progress);
+                            });
+
+                            attachmentResponse.data.on('end', () => {
+                                try {
+                                    // Combine chunks and add to zip
+                                    const attachmentData = Buffer.concat(chunks);
+                                    zip.addFile(attachmentPath, attachmentData);
+                                    resolve();
+                                } catch (error) {
+                                    reject(error);
+                                }
+                            });
+
+                            attachmentResponse.data.on('error', (error) => {
+                                reject(error);
+                            });
+                        });
                         
                         ticket.attachments.push({
                             filename: attachment.filename,
