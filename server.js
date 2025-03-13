@@ -168,28 +168,8 @@ app.get('/api/download-tickets', async (req, res) => {
             }
         }
 
-        // Second pass: process attachments
-        let processedAttachments = 0;
-        for (const issue of issues) {
-            if (!issue.fields.attachment) continue;
-            
-            for (const attachment of issue.fields.attachment) {
-                try {
-                    processedAttachments++;
-                    const attachmentSize = parseInt(attachment.size || 0);
-                    
-                    progress.currentOperation = 'Processing attachments';
-                    progress.operationDetails = `${processedAttachments} of ${totalAttachmentCount}`;
-                    progress.message = `Processing: ${attachment.filename} (${(attachmentSize / (1024 * 1024)).toFixed(1)}MB)`;
-                    updateTimeEstimates();
-                    sendProgress(progress);
-                    
-                    downloadData.totalAttachments++;
-                } catch (error) {
-                    console.error(`Failed to process attachment: ${attachment.filename}`);
-                }
-            }
-        }
+        // Skip second pass and go straight to segmentation
+        downloadData.totalAttachments = totalAttachmentCount;
 
         downloadData.estimatedSize = `${(totalEstimatedBytes / (1024 * 1024)).toFixed(1)} MB`;
 
@@ -202,65 +182,124 @@ app.get('/api/download-tickets', async (req, res) => {
             number: 1
         };
 
-        // Group attachments into segments
-        for (const issue of issues) {
-            if (!issue.fields.attachment) continue;
-            
-            for (const attachment of issue.fields.attachment) {
-                const attachmentSize = parseInt(attachment.size || 0);
+        // Group attachments into segments with error handling
+        try {
+            progress.stage = 'analyzing';
+            progress.currentOperation = 'Analyzing attachments';
+            progress.operationDetails = `Found ${totalAttachmentCount} attachments (${(totalEstimatedBytes / (1024 * 1024)).toFixed(1)}MB total)`;
+            progress.message = 'Calculating segments needed...';
+            sendProgress(progress);
+
+            // Calculate and show segment information
+            const estimatedSegments = Math.ceil(totalEstimatedBytes / SEGMENT_SIZE_LIMIT);
+            progress.operationDetails = `Total size: ${(totalEstimatedBytes / (1024 * 1024)).toFixed(1)}MB`;
+            progress.message = `Will create ${estimatedSegments} segments of 50MB each`;
+            sendProgress(progress);
+
+            // Add a small delay to ensure progress is shown
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            for (const issue of issues) {
+                if (!issue.fields.attachment) continue;
                 
-                // If attachment is larger than segment size, split it
-                if (attachmentSize > SEGMENT_SIZE_LIMIT) {
-                    const segmentCount = Math.ceil(attachmentSize / SEGMENT_SIZE_LIMIT);
-                    for (let i = 0; i < segmentCount; i++) {
-                        attachmentSegments.push({
-                            files: [{
+                for (const attachment of issue.fields.attachment) {
+                    try {
+                        const attachmentSize = parseInt(attachment.size || 0);
+                        if (attachmentSize === 0) {
+                            console.warn(`Skipping attachment with size 0: ${attachment.filename}`);
+                            continue;
+                        }
+                        
+                        // If attachment is larger than segment size, split it
+                        if (attachmentSize > SEGMENT_SIZE_LIMIT) {
+                            const segmentCount = Math.ceil(attachmentSize / SEGMENT_SIZE_LIMIT);
+                            progress.currentOperation = 'Processing large file';
+                            progress.operationDetails = `${attachment.filename} (${(attachmentSize / (1024 * 1024)).toFixed(1)}MB)`;
+                            progress.message = `Splitting into ${segmentCount} parts of 50MB each`;
+                            sendProgress(progress);
+
+                            for (let i = 0; i < segmentCount; i++) {
+                                const startByte = i * SEGMENT_SIZE_LIMIT;
+                                const endByte = Math.min((i + 1) * SEGMENT_SIZE_LIMIT, attachmentSize);
+                                attachmentSegments.push({
+                                    files: [{
+                                        ticket: issue.key,
+                                        attachment,
+                                        partNumber: i + 1,
+                                        totalParts: segmentCount,
+                                        startByte,
+                                        endByte,
+                                        size: endByte - startByte
+                                    }],
+                                    size: endByte - startByte,
+                                    number: attachmentSegments.length + 1
+                                });
+                            }
+                        }
+                        // If current segment would exceed limit, start new segment
+                        else if (currentSegment.size + attachmentSize > SEGMENT_SIZE_LIMIT) {
+                            if (currentSegment.files.length > 0) {
+                                attachmentSegments.push(currentSegment);
+                            }
+                            currentSegment = {
+                                files: [{
+                                    ticket: issue.key,
+                                    attachment,
+                                    partNumber: 1,
+                                    totalParts: 1,
+                                    startByte: 0,
+                                    endByte: attachmentSize,
+                                    size: attachmentSize
+                                }],
+                                size: attachmentSize,
+                                number: attachmentSegments.length + 1
+                            };
+                        }
+                        // Add to current segment
+                        else {
+                            currentSegment.files.push({
                                 ticket: issue.key,
                                 attachment,
-                                partNumber: i + 1,
-                                totalParts: segmentCount,
-                                startByte: i * SEGMENT_SIZE_LIMIT,
-                                endByte: Math.min((i + 1) * SEGMENT_SIZE_LIMIT, attachmentSize)
-                            }],
-                            size: Math.min(SEGMENT_SIZE_LIMIT, attachmentSize - (i * SEGMENT_SIZE_LIMIT)),
-                            number: attachmentSegments.length + 1
-                        });
+                                partNumber: 1,
+                                totalParts: 1,
+                                startByte: 0,
+                                endByte: attachmentSize,
+                                size: attachmentSize
+                            });
+                            currentSegment.size += attachmentSize;
+                        }
+
+                        progress.currentOperation = 'Building segments';
+                        progress.operationDetails = `Segment ${attachmentSegments.length + 1}`;
+                        progress.message = `Adding: ${attachment.filename} (${(attachmentSize / (1024 * 1024)).toFixed(1)}MB)`;
+                        sendProgress(progress);
+                    } catch (error) {
+                        console.error(`Error processing attachment: ${attachment.filename}`, error);
+                        progress.currentOperation = 'Warning';
+                        progress.operationDetails = `Error with ${attachment.filename}`;
+                        progress.message = error.message;
+                        sendProgress(progress);
                     }
                 }
-                // If current segment would exceed limit, create new segment
-                else if (currentSegment.size + attachmentSize > SEGMENT_SIZE_LIMIT) {
-                    attachmentSegments.push(currentSegment);
-                    currentSegment = {
-                        files: [{
-                            ticket: issue.key,
-                            attachment,
-                            partNumber: 1,
-                            totalParts: 1,
-                            startByte: 0,
-                            endByte: attachmentSize
-                        }],
-                        size: attachmentSize,
-                        number: attachmentSegments.length + 1
-                    };
-                }
-                // Add to current segment
-                else {
-                    currentSegment.files.push({
-                        ticket: issue.key,
-                        attachment,
-                        partNumber: 1,
-                        totalParts: 1,
-                        startByte: 0,
-                        endByte: attachmentSize
-                    });
-                    currentSegment.size += attachmentSize;
-                }
             }
-        }
-        
-        // Add final segment if not empty
-        if (currentSegment.files.length > 0) {
-            attachmentSegments.push(currentSegment);
+            
+            // Add final segment if not empty
+            if (currentSegment.files.length > 0) {
+                attachmentSegments.push(currentSegment);
+            }
+
+            const finalSegmentCount = attachmentSegments.length;
+            if (finalSegmentCount === 0) {
+                throw new Error('No valid attachments found to download');
+            }
+
+            progress.currentOperation = 'Segmentation complete';
+            progress.operationDetails = `Created ${finalSegmentCount} segments`;
+            progress.message = `Ready to download ${downloadData.totalAttachments} attachments in ${finalSegmentCount} parts`;
+            sendProgress(progress);
+        } catch (error) {
+            console.error('Error during segmentation:', error);
+            throw new Error('Failed to organize attachments: ' + error.message);
         }
 
         const totalSegments = attachmentSegments.length;
@@ -320,9 +359,9 @@ app.get('/api/download-tickets', async (req, res) => {
                 }))
             });
 
-            progress.currentOperation = 'Creating segments';
-            progress.operationDetails = `Created segment ${segment.number} of ${totalSegments} (50MB segments)`;
-            progress.message = `Segment ${segment.number}: ${(segment.size / (1024 * 1024)).toFixed(1)}MB - ${segment.files.length} files`;
+            progress.currentOperation = 'Downloading segment';
+            progress.operationDetails = `Segment ${segment.number} of ${totalSegments}`;
+            progress.message = `Downloading ${segment.files.length} files (${(segment.size / (1024 * 1024)).toFixed(1)}MB)`;
             sendProgress(progress);
         }
 
