@@ -15,7 +15,9 @@ const port = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname)));
+// Serve static files
+app.use(express.static(__dirname));
+app.use('/downloads', express.static(path.join(__dirname, 'downloads')));
 
 // Utility function to create Jira API headers
 const createJiraHeaders = (auth) => ({
@@ -28,11 +30,16 @@ const createJiraHeaders = (auth) => ({
 app.post('/api/test-connection', async (req, res) => {
     const { username, apiKey } = req.body;
     const auth = Buffer.from(`${username}:${apiKey}`).toString('base64');
+    console.log('Testing connection with auth:', { username, auth });
     
     try {
         const response = await axios.get('https://thehut.atlassian.net/rest/api/2/myself', {
-            headers: createJiraHeaders(auth)
+            headers: {
+                'Authorization': `Basic ${auth}`,
+                'Accept': 'application/json'
+            }
         });
+        console.log('Connection successful:', response.data);
         res.json({ success: true, user: response.data });
     } catch (error) {
         res.status(401).json({
@@ -48,10 +55,20 @@ app.post('/api/get-projects', async (req, res) => {
     const auth = Buffer.from(`${username}:${apiKey}`).toString('base64');
     
     try {
+        console.log('Fetching projects with auth:', { username });
         const response = await axios.get('https://thehut.atlassian.net/rest/api/2/project', {
             headers: createJiraHeaders(auth)
         });
-        res.json({ success: true, projects: response.data });
+        console.log('Projects response:', response.data);
+        
+        // Map the response to include both name and key
+        const projects = response.data.map(project => ({
+            key: project.key,
+            name: project.name
+        }));
+        console.log('Mapped projects:', projects);
+        
+        res.json({ success: true, projects });
     } catch (error) {
         res.status(500).json({
             success: false,
@@ -71,7 +88,22 @@ app.get('/api/download-tickets', async (req, res) => {
     const { username, apiKey, projectKey, downloadType = 'all', fileFormat = 'json' } = req.query;
     const auth = Buffer.from(`${username}:${apiKey}`).toString('base64');
 
+    console.log('Download request received:', {
+        projectKey,
+        downloadType,
+        fileFormat,
+        username,
+        timestamp: new Date().toISOString()
+    });
+
     try {
+        // Log downloads directory status
+        console.log('Downloads directory status:', {
+            path: downloadsDir,
+            exists: fs.existsSync(downloadsDir),
+            isDirectory: fs.existsSync(downloadsDir) && fs.statSync(downloadsDir).isDirectory()
+        });
+
         // Set headers for SSE
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',
@@ -85,6 +117,7 @@ app.get('/api/download-tickets', async (req, res) => {
         };
     
         // Get project info and total number of issues
+        console.log('Fetching project info and issue count...');
         const jql = `project = ${projectKey}`;
         const [projectResponse, countResponse] = await Promise.all([
             axios.get(`https://thehut.atlassian.net/rest/api/2/project/${projectKey}`, {
@@ -100,6 +133,14 @@ app.get('/api/download-tickets', async (req, res) => {
 
         const projectInfo = projectResponse.data;
         const totalIssues = countResponse.data.total;
+        
+        console.log('Project info retrieved:', {
+            projectKey: projectInfo.key,
+            projectName: projectInfo.name,
+            totalIssues,
+            timestamp: new Date().toISOString()
+        });
+
         let issues = [];
         const startTime = Date.now();
         const progress = {
@@ -123,31 +164,121 @@ app.get('/api/download-tickets', async (req, res) => {
         };
 
         // Send initial progress with download type info
-        progress.currentOperation = downloadType === 'attachments' ? 'Downloading Attachments' : 'Downloading All Data';
+        progress.currentOperation = `Downloading ${downloadType === 'all' ? 'Everything' : downloadType === 'tickets' ? 'Tickets Only' : 'Attachments Only'}`;
         sendProgress(progress);
 
         // Fetch issues based on download type
-        if (downloadType === 'attachments') {
-            // For attachments only, just get attachment info
-            progress.stage = 'fetching';
-            progress.currentOperation = 'Scanning Project';
-            progress.message = 'Finding attachments...';
-            progress.operationDetails = `Project: ${projectKey}`;
-            sendProgress(progress);
+        progress.stage = 'fetching';
+        progress.currentOperation = 'Scanning Project';
+        progress.message = 'Finding content...';
+        progress.operationDetails = `Project: ${projectKey}`;
+        sendProgress(progress);
 
-            const response = await axios.post('https://thehut.atlassian.net/rest/api/2/search', {
-                jql,
-                maxResults: totalIssues,
-                fields: ['attachment']
-            }, {
-                headers: createJiraHeaders(auth)
+        // Define fields to fetch based on download type
+        let fields = [];
+        if (downloadType === 'all') {
+            fields = ['summary', 'description', 'comment', 'attachment', 'created', 'updated', 'status', 'priority', 'assignee', 'reporter'];
+        } else if (downloadType === 'tickets') {
+            fields = ['summary', 'description', 'comment', 'created', 'updated', 'status', 'priority', 'assignee', 'reporter'];
+        } else if (downloadType === 'attachments') {
+            fields = ['attachment'];
+        }
+
+        const response = await axios.post('https://thehut.atlassian.net/rest/api/2/search', {
+            jql,
+            maxResults: totalIssues,
+            fields
+        }, {
+            headers: createJiraHeaders(auth)
+        });
+
+        issues = response.data.issues;
+        progress.currentIssue = issues.length;
+        progress.batchProgress = 100;
+        sendProgress(progress);
+
+        console.log('Processing issues:', {
+            count: issues.length,
+            downloadType,
+            timestamp: new Date().toISOString()
+        });
+
+        // Process issues based on download type
+        const ticketsData = issues.map(issue => ({
+            key: issue.key || '',
+            summary: issue.fields?.summary || '',
+            description: issue.fields?.description || '',
+            created: issue.fields?.created || '',
+            updated: issue.fields?.updated || '',
+            status: issue.fields?.status?.name || '',
+            priority: issue.fields?.priority?.name || '',
+            assignee: issue.fields?.assignee?.displayName || '',
+            reporter: issue.fields?.reporter?.displayName || '',
+            comments: (issue.fields?.comment?.comments || []).map(c => ({
+                author: c?.author?.displayName || '',
+                created: c?.created || '',
+                body: c?.body || ''
+            }))
+        }));
+
+        // For tickets-only or all content, create the tickets file
+        if (downloadType === 'tickets' || downloadType === 'all') {
+            const fileName = `${projectKey}_tickets_${new Date().toISOString().replace(/[:.]/g, '-')}.${fileFormat}`;
+            const filePath = path.join(downloadsDir, fileName);
+
+            console.log('Writing ticket data to file:', {
+                fileName,
+                format: fileFormat,
+                ticketCount: ticketsData.length,
+                path: filePath,
+                timestamp: new Date().toISOString()
             });
 
-            issues = response.data.issues;
-            progress.currentIssue = issues.length;
-            progress.batchProgress = 100;
-            sendProgress(progress);
+            if (fileFormat === 'json') {
+                fs.writeFileSync(filePath, JSON.stringify(ticketsData, null, 2));
+                console.log('JSON file written successfully');
+            } else {
+                // Convert to CSV format
+                const csvRows = [];
+                // Add headers
+                csvRows.push(['Key', 'Summary', 'Description', 'Created', 'Updated', 'Status', 'Priority', 'Assignee', 'Reporter', 'Comments']);
+                // Add data
+                ticketsData.forEach(ticket => {
+                    csvRows.push([
+                        ticket.key,
+                        ticket.summary,
+                        ticket.description,
+                        ticket.created,
+                        ticket.updated,
+                        ticket.status,
+                        ticket.priority,
+                        ticket.assignee,
+                        ticket.reporter,
+                        ticket.comments.map(c => `${c.author}: ${c.body}`).join(' | ')
+                    ]);
+                });
+                fs.writeFileSync(filePath, csvRows.map(row => row.join(',')).join('\n'));
+            }
+
+            // If tickets only, send file info for download
+            if (downloadType === 'tickets') {
+                sendProgress({
+                    success: true,
+                    data: {
+                        tickets: ticketsData,
+                        totalTickets: ticketsData.length,
+                        totalComments: ticketsData.reduce((sum, t) => sum + (t.comments?.length || 0), 0),
+                        totalAttachments: 0,
+                        fileName: fileName,
+                        totalSize: `${(fs.statSync(filePath).size / (1024 * 1024)).toFixed(1)}MB`,
+                        downloadType: 'tickets'
+                    }
+                });
+                return;
+            }
         }
+
+        // For attachments-only or all content, continue with attachment processing
 
         const downloadData = {
             projectInfo,
@@ -159,6 +290,8 @@ app.get('/api/download-tickets', async (req, res) => {
         progress.stage = 'processing';
         let totalEstimatedBytes = 0;
         let totalAttachmentCount = 0;
+        
+        console.log('Starting attachment analysis...');
         
         // First pass: count attachments and calculate total size
         for (const issue of issues) {
@@ -175,8 +308,14 @@ app.get('/api/download-tickets', async (req, res) => {
 
         downloadData.estimatedSize = `${(totalEstimatedBytes / (1024 * 1024)).toFixed(1)} MB`;
 
-        // Calculate segments needed for attachments
-        const SEGMENT_SIZE_LIMIT = 50 * 1024 * 1024; // 50MB per segment
+            console.log('Attachment analysis complete:', {
+                totalAttachments: totalAttachmentCount,
+                totalSize: `${(totalEstimatedBytes / (1024 * 1024)).toFixed(1)} MB`,
+                timestamp: new Date().toISOString()
+            });
+
+            // Calculate segments needed for attachments
+            const SEGMENT_SIZE_LIMIT = 50 * 1024 * 1024; // 50MB per segment
         const attachmentSegments = [];
         let currentSegment = {
             files: [],
@@ -321,6 +460,14 @@ app.get('/api/download-tickets', async (req, res) => {
             for (const file of segment.files) {
                 const { ticket, attachment, partNumber, totalParts, startByte, endByte } = file;
                 
+                console.log('Downloading attachment:', {
+                    filename: attachment.filename,
+                    ticket: ticket,
+                    size: `${((endByte - startByte) / (1024 * 1024)).toFixed(1)} MB`,
+                    part: `${partNumber}/${totalParts}`,
+                    timestamp: new Date().toISOString()
+                });
+
                 // Get attachment data
                 const attachmentResponse = await axios.get(attachment.content, {
                     headers: {
@@ -340,6 +487,14 @@ app.get('/api/download-tickets', async (req, res) => {
                     Buffer.from(attachmentResponse.data)
                 );
             }
+
+            console.log('Creating segment file:', {
+                segmentNumber: segment.number,
+                totalSegments,
+                fileCount: segment.files.length,
+                size: `${(segment.size / (1024 * 1024)).toFixed(1)} MB`,
+                timestamp: new Date().toISOString()
+            });
 
             // Save segment with detailed info
             const segmentFileName = `${projectKey}_attachments_part${segment.number}of${totalSegments}_${(segment.size / (1024 * 1024)).toFixed(1)}MB_${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
@@ -374,11 +529,22 @@ app.get('/api/download-tickets', async (req, res) => {
         progress.message = 'All segments ready!';
         sendProgress(progress);
 
-        // Send final success response with segment information
-        sendProgress({
+        // Send final success response
+        const finalResponse = {
             success: true,
             data: {
                 ...downloadData,
+                tickets: ticketsData,
+                totalTickets: ticketsData.length,
+                totalComments: ticketsData.reduce((sum, t) => sum + (t.comments?.length || 0), 0),
+                totalAttachments: totalAttachmentCount
+            }
+        };
+
+        // Add attachment-specific data if present
+        if (segments && segments.length > 0) {
+            finalResponse.data = {
+                ...finalResponse.data,
                 segments,
                 totalSegments,
                 totalSize: `${(totalEstimatedBytes / (1024 * 1024)).toFixed(1)}MB`,
@@ -395,10 +561,25 @@ app.get('/api/download-tickets', async (req, res) => {
                     }))
                 })),
                 segmentSize: '50MB'
-            }
-        });
+            };
+        }
+
+        sendProgress(finalResponse);
     } catch (error) {
-        console.error('Download error:', error);
+        const errorDetails = {
+            message: error.message,
+            code: error.code,
+            stack: error.stack,
+            timestamp: new Date().toISOString()
+        };
+        
+        if (error.response) {
+            errorDetails.status = error.response.status;
+            errorDetails.statusText = error.response.statusText;
+            errorDetails.data = error.response.data;
+        }
+        
+        console.error('Download error:', errorDetails);
         if (!res.headersSent) {
             res.writeHead(200, {
                 'Content-Type': 'text/event-stream',
@@ -418,23 +599,90 @@ app.get('/api/download-tickets', async (req, res) => {
 app.get('/api/download-project/:filename', (req, res) => {
     const zipFilePath = path.join(downloadsDir, req.params.filename);
     
+    console.log('Download project request:', {
+        filename: req.params.filename,
+        path: zipFilePath,
+        timestamp: new Date().toISOString()
+    });
+    
     if (fs.existsSync(zipFilePath)) {
-        res.download(zipFilePath, req.params.filename, (err) => {
-            if (!err) {
-                // Delete the zip file after download
+        const stats = fs.statSync(zipFilePath);
+        console.log('File stats:', {
+            size: `${(stats.size / (1024 * 1024)).toFixed(1)} MB`,
+            created: stats.birthtime,
+            modified: stats.mtime,
+            timestamp: new Date().toISOString()
+        });
+
+        // Set headers for file download
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${req.params.filename}"`);
+        
+        // Stream the file instead of loading it all into memory
+        const fileStream = fs.createReadStream(zipFilePath);
+        
+        fileStream.on('error', (error) => {
+            const errorDetails = {
+                message: error.message,
+                code: error.code,
+                stack: error.stack,
+                timestamp: new Date().toISOString()
+            };
+            console.error('Error streaming file:', errorDetails);
+            res.status(500).json({
+                success: false,
+                error: 'Failed to download file'
+            });
+        });
+
+        fileStream.on('end', () => {
+            console.log('File stream complete:', {
+                filename: req.params.filename,
+                timestamp: new Date().toISOString()
+            });
+            // Delete the file after successful download
+            setTimeout(() => {
+                console.log('Attempting to delete file:', {
+                    filename: req.params.filename,
+                    path: zipFilePath,
+                    timestamp: new Date().toISOString()
+                });
                 fs.unlink(zipFilePath, (unlinkErr) => {
                     if (unlinkErr) {
-                        console.error('Error deleting zip file:', unlinkErr);
+                        console.error('Error deleting zip file:', {
+                            error: unlinkErr.message,
+                            code: unlinkErr.code,
+                            stack: unlinkErr.stack,
+                            timestamp: new Date().toISOString()
+                        });
+                    } else {
+                        console.log('File deleted successfully:', {
+                            filename: req.params.filename,
+                            timestamp: new Date().toISOString()
+                        });
                     }
                 });
-            }
+            }, 1000); // Wait 1 second before deleting
         });
+
+        // Pipe the file to the response
+        fileStream.pipe(res);
     } else {
+        console.error('File not found:', {
+            filename: req.params.filename,
+            path: zipFilePath,
+            timestamp: new Date().toISOString()
+        });
         res.status(404).json({
             success: false,
             error: 'File not found'
         });
     }
+});
+
+// Serve index.html for all other routes to handle client-side routing
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
 // Start server

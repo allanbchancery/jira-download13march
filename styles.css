@@ -178,8 +178,80 @@ input:focus {
     z-index: 1;
 }
 
+.alphabet-nav {
+    position: sticky;
+    top: 0;
+    background: var(--card-background);
+    padding: 1rem 0;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid var(--border-color);
+    z-index: 100;
+}
+
+.letter-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: center;
+}
+
+.letter-links a {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 4px;
+    background: var(--background-color);
+    color: var(--text-color);
+    text-decoration: none;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.letter-links a:hover {
+    background: var(--primary-color);
+    color: white;
+}
+
+.letter-links a.active {
+    background: var(--primary-color);
+    color: white;
+}
+
 .project-list {
     margin-bottom: 1.5rem;
+    scroll-padding-top: 5rem;
+}
+
+.project-section {
+    scroll-margin-top: 5rem;
+    padding: 1rem 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.project-section h3 {
+    color: var(--primary-color);
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+    padding-left: 0.5rem;
+    border-left: 3px solid var(--primary-color);
+}
+
+.project-section:last-child {
+    border-bottom: none;
+}
+
+@media (max-width: 768px) {
+    .letter-links {
+        gap: 0.25rem;
+    }
+
+    .letter-links a {
+        width: 1.75rem;
+        height: 1.75rem;
+        font-size: 0.875rem;
+    }
 }
 
 .download-options {
@@ -722,6 +794,56 @@ summary:hover {
 
     .btn {
         width: 100%;
+    }
+}
+
+.quick-nav-btn {
+    position: fixed;
+    bottom: 2rem;
+    right: 2rem;
+    background: var(--primary-color);
+    color: white;
+    border-radius: 50%;
+    width: 56px;
+    height: 56px;
+    box-shadow: 0 2px 8px var(--shadow-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    z-index: 1000;
+    opacity: 0;
+    transform: translateY(100px);
+    pointer-events: none;
+}
+
+.quick-nav-btn.visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+}
+
+.quick-nav-btn:hover {
+    background: var(--primary-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px var(--shadow-color);
+}
+
+.quick-nav-btn i {
+    font-size: 1.5rem;
+}
+
+@media (max-width: 768px) {
+    .quick-nav-btn {
+        bottom: 1rem;
+        right: 1rem;
+        width: 48px;
+        height: 48px;
+    }
+    
+    .quick-nav-btn i {
+        font-size: 1.25rem;
     }
 }
 

@@ -121,23 +121,84 @@ async function testConnection(username, apiKey) {
 // Populate project list
 function populateProjects(projects) {
     projectList.innerHTML = '';
-    projects.forEach(project => {
-        const projectItem = document.createElement('div');
-        projectItem.className = 'project-item';
-        projectItem.innerHTML = `
-            <input type="checkbox" id="${project.key}" value="${project.key}">
-            <label for="${project.key}">${project.name} (${project.key})</label>
-        `;
-        projectList.appendChild(projectItem);
+    
+    // Group projects by first letter of name or key
+    const projectsByLetter = projects.reduce((acc, project) => {
+        // Try to use project name first, fallback to key
+        const displayName = project.name || project.key;
+        const firstLetter = displayName.charAt(0).toUpperCase();
+        if (!acc[firstLetter]) {
+            acc[firstLetter] = [];
+        }
+        acc[firstLetter].push(project);
+        return acc;
+    }, {});
+
+    // Sort letters and create sections
+    Object.keys(projectsByLetter).sort().forEach(letter => {
+        // Create section for this letter
+        const section = document.createElement('div');
+        section.className = 'project-section';
+        section.id = `section-${letter}`;
+        
+        // Add letter heading
+        const heading = document.createElement('h3');
+        heading.textContent = letter;
+        section.appendChild(heading);
+        
+        // Add projects for this letter
+        projectsByLetter[letter].sort((a, b) => {
+            const aName = a.name || a.key;
+            const bName = b.name || b.key;
+            return aName.localeCompare(bName);
+        }).forEach(project => {
+            const projectItem = document.createElement('div');
+            projectItem.className = 'project-item';
+            const displayName = project.name || project.key;
+            projectItem.innerHTML = `
+                <input type="checkbox" id="${project.key}" value="${project.key}">
+                <label for="${project.key}">${displayName} (${project.key})</label>
+            `;
+            section.appendChild(projectItem);
+        });
+        
+        projectList.appendChild(section);
     });
     
-    // Enable download button when at least one project is selected
+    // Enable download button and show download options when at least one project is selected
     const checkboxes = projectList.querySelectorAll('input[type="checkbox"]');
+    const downloadOptions = document.querySelector('.download-options');
     checkboxes.forEach(checkbox => {
         checkbox.addEventListener('change', () => {
             const anyChecked = Array.from(checkboxes).some(cb => cb.checked);
             downloadBtn.disabled = !anyChecked;
+            downloadOptions.style.display = anyChecked ? 'block' : 'none';
         });
+    });
+    // Initially hide download options
+    downloadOptions.style.display = 'none';
+
+    // Update active letter in navigation based on scroll position
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const letter = entry.target.id.split('-')[1];
+                document.querySelectorAll('.letter-links a').forEach(link => {
+                    link.classList.toggle('active', link.getAttribute('href') === `#section-${letter}`);
+                });
+            }
+        });
+    }, { threshold: 0.5 });
+
+    // Observe each section
+    document.querySelectorAll('.project-section').forEach(section => {
+        observer.observe(section);
+    });
+
+    // Show/hide letters based on available sections
+    document.querySelectorAll('.letter-links a').forEach(link => {
+        const letter = link.getAttribute('href').split('-')[1];
+        link.style.display = projectsByLetter[letter] ? 'flex' : 'none';
     });
 }
 
@@ -326,6 +387,13 @@ downloadBtn.addEventListener('click', async () => {
                         if (!data.success) {
                             throw new Error(data.error);
                         }
+                        
+                        // Handle tickets-only download
+                        if (data.data.downloadType === 'tickets') {
+                            const downloadUrl = `/api/download-project/${data.data.fileName}`;
+                            window.location.href = downloadUrl;
+                        }
+                        
                         return data;
                     }
                     
@@ -393,9 +461,9 @@ downloadBtn.addEventListener('click', async () => {
                 });
                 
                 // Update stats and show detailed progress
-                currentDownloadStats.totalTickets += data.data.tickets.length;
-                currentDownloadStats.totalComments += data.data.totalComments;
-                currentDownloadStats.totalAttachments += data.data.totalAttachments;
+                currentDownloadStats.totalTickets += data.data.tickets ? data.data.tickets.length : 0;
+                currentDownloadStats.totalComments += data.data.totalComments || 0;
+                currentDownloadStats.totalAttachments += data.data.totalAttachments || 0;
                 
                 // Show download dialog
                 updateProgress(project, 60, 'Preparing download...');
@@ -412,9 +480,9 @@ downloadBtn.addEventListener('click', async () => {
                         <p>Total Size: ${data.data.totalSize}</p>
                         <p>Contains:</p>
                         <ul>
-                            <li>${data.data.tickets.length} tickets</li>
-                            <li>${data.data.totalComments} comments</li>
-                            <li>${data.data.totalAttachments} attachments</li>
+                            <li>${data.data.tickets ? data.data.tickets.length : 0} tickets</li>
+                            <li>${data.data.totalComments || 0} comments</li>
+                            <li>${data.data.totalAttachments || 0} attachments</li>
                         </ul>
                         ${data.data.segments ? `
                             <div class="segments-info">
@@ -601,6 +669,32 @@ async function simulateDownload(project, message, startProgress, endProgress) {
     
     updateProgress(project, endProgress, message);
 }
+
+// Quick Navigation Button functionality
+const quickNavBtn = document.getElementById('quickNavBtn');
+const downloadOptions = document.querySelector('.download-options');
+
+// Show/hide quick nav button based on project selection
+function updateQuickNavButton() {
+    const anyChecked = Array.from(projectList.querySelectorAll('input[type="checkbox"]')).some(cb => cb.checked);
+    if (anyChecked) {
+        quickNavBtn.classList.add('visible');
+    } else {
+        quickNavBtn.classList.remove('visible');
+    }
+}
+
+// Handle quick nav button click
+quickNavBtn.addEventListener('click', () => {
+    downloadOptions.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
+// Update quick nav button visibility when checkboxes change
+projectList.addEventListener('change', (e) => {
+    if (e.target.type === 'checkbox') {
+        updateQuickNavButton();
+    }
+});
 
 // Initialize
 loadSavedSettings();
