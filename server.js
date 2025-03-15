@@ -7,8 +7,9 @@ const AdmZip = require('adm-zip');
 const fs = require('fs');
 const sqlite3 = require('sqlite3');
 
-// Import debug helpers
+// Import debug helpers and logger
 const debug = require('./server-debug');
+const logger = debug.logger;
 
 // Database setup
 let db = new sqlite3.Database('jira_attachments.db');
@@ -65,7 +66,7 @@ const port = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(debug.debugMiddleware); // Add debug middleware
+app.use(debug.debugMiddleware); // Add debug middleware for request logging
 
 // Serve static files
 app.use(express.static(__dirname));
@@ -95,10 +96,18 @@ const createJiraHeaders = (auth) => ({
 });
 
 // Test connection endpoint
-app.post('/api/test-connection', async (req, res) => {
+app.post('/api/test-connection', async (req, res, next) => {
   const { username, apiKey } = req.body;
+  
+  if (!username || !apiKey) {
+    return res.status(400).json({
+      success: false,
+      error: 'Username and API key are required'
+    });
+  }
+  
   const auth = Buffer.from(`${username}:${apiKey}`).toString('base64');
-  console.log('Testing connection with auth:', { username, auth });
+  logger.info('Testing connection with auth', { username });
 
   try {
     const response = await axios.get('https://thehut.atlassian.net/rest/api/2/myself', {
@@ -107,41 +116,99 @@ app.post('/api/test-connection', async (req, res) => {
         'Accept': 'application/json'
       }
     });
-    console.log('Connection successful:', response.data);
+    logger.info('Connection successful', { 
+      username, 
+      displayName: response.data.displayName,
+      accountId: response.data.accountId
+    });
     res.json({ success: true, user: response.data });
   } catch (error) {
-    res.status(401).json({
-      success: false,
-      error: 'Failed to authenticate with Jira'
+    logger.warn('Connection failed', { 
+      username, 
+      status: error.response?.status,
+      statusText: error.response?.statusText,
+      message: error.message
     });
+    
+    // Provide more detailed error information
+    if (error.response) {
+      // The request was made and the server responded with a status code
+      // that falls out of the range of 2xx
+      res.status(error.response.status).json({
+        success: false,
+        error: 'Failed to authenticate with Jira',
+        details: error.response.data?.message || error.response.statusText
+      });
+    } else if (error.request) {
+      // The request was made but no response was received
+      logger.error('No response received from Jira API', { error: error.message });
+      res.status(500).json({
+        success: false,
+        error: 'No response received from Jira API',
+        details: 'The server may be down or unreachable'
+      });
+    } else {
+      // Something happened in setting up the request that triggered an Error
+      logger.error('Error setting up request', { error: error.message });
+      next(error); // Pass to error handler
+    }
   }
 });
 
 // Get projects endpoint
-app.post('/api/get-projects', async (req, res) => {
+app.post('/api/get-projects', async (req, res, next) => {
   const { username, apiKey } = req.body;
+  
+  if (!username || !apiKey) {
+    return res.status(400).json({
+      success: false,
+      error: 'Username and API key are required'
+    });
+  }
+  
   const auth = Buffer.from(`${username}:${apiKey}`).toString('base64');
 
   try {
-    console.log('Fetching projects with auth:', { username });
+    logger.info('Fetching projects', { username });
     const response = await axios.get('https://thehut.atlassian.net/rest/api/2/project', {
       headers: createJiraHeaders(auth)
     });
-    console.log('Projects response:', response.data);
-
+    
     // Map the response to include both name and key
     const projects = response.data.map(project => ({
       key: project.key,
       name: project.name
     }));
-    console.log('Mapped projects:', projects);
-
+    
+    logger.info('Projects fetched successfully', { 
+      username, 
+      projectCount: projects.length 
+    });
+    
     res.json({ success: true, projects });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch projects'
+    logger.error('Failed to fetch projects', { 
+      username, 
+      error: error.message,
+      status: error.response?.status,
+      data: error.response?.data
     });
+    
+    if (error.response) {
+      res.status(error.response.status).json({
+        success: false,
+        error: 'Failed to fetch projects',
+        details: error.response.data?.message || error.response.statusText
+      });
+    } else if (error.request) {
+      res.status(500).json({
+        success: false,
+        error: 'No response received from Jira API',
+        details: 'The server may be down or unreachable'
+      });
+    } else {
+      next(error); // Pass to error handler
+    }
   }
 });
 
@@ -156,7 +223,40 @@ app.get('/api/download-tickets', async (req, res) => {
   const { username, apiKey, projectKey, downloadType = 'all', fileFormat = 'json' } = req.query;
   const auth = Buffer.from(`${username}:${apiKey}`).toString('base64');
 
-  console.log('Download request received:', {
+  // Helper function to send periodic keep-alive messages
+  const startKeepAlive = (res, projectKey, intervalMs = 15000) => {
+    const keepAliveInterval = setInterval(() => {
+      // Check if response is still writable
+      if (!res.writableEnded) {
+        try {
+          // Send an empty progress update as a heartbeat
+          res.write(`data: ${JSON.stringify({
+            keepAlive: true,
+            timestamp: new Date().toISOString(),
+            projectKey
+          })}\n\n`);
+          
+          logger.debug('Sent keep-alive message', {
+            projectKey,
+            timestamp: new Date().toISOString()
+          });
+        } catch (error) {
+          logger.error('Error sending keep-alive message', {
+            projectKey,
+            error: error.message
+          });
+          clearInterval(keepAliveInterval);
+        }
+      } else {
+        // Stop interval if response has ended
+        clearInterval(keepAliveInterval);
+      }
+    }, intervalMs);
+    
+    return keepAliveInterval;
+  };
+
+  logger.info('Download request received', {
     projectKey,
     downloadType,
     fileFormat,
@@ -164,9 +264,11 @@ app.get('/api/download-tickets', async (req, res) => {
     timestamp: new Date().toISOString()
   });
 
+  let keepAliveInterval;
+
   try {
     // Log downloads directory status
-    console.log('Downloads directory status:', {
+    logger.debug('Downloads directory status', {
       path: downloadsDir,
       exists: fs.existsSync(downloadsDir),
       isDirectory: fs.existsSync(downloadsDir) && fs.statSync(downloadsDir).isDirectory()
@@ -178,6 +280,9 @@ app.get('/api/download-tickets', async (req, res) => {
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive'
     });
+
+    // Start keep-alive messages
+    keepAliveInterval = startKeepAlive(res, projectKey);
 
     // Helper function to send SSE
     const sendProgress = (data) => {
@@ -799,7 +904,11 @@ app.post('/api/validate-download-path', async (req, res) => {
       validation
     });
   } catch (error) {
-    console.error('Error validating path:', error);
+    logger.error('Error validating path', { 
+      path, 
+      error: error.message,
+      stack: error.stack
+    });
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to validate path'
@@ -807,17 +916,40 @@ app.post('/api/validate-download-path', async (req, res) => {
   }
 });
 
+// Client error reporting endpoint
+app.post('/api/client-error', (req, res) => {
+  const errorData = req.body;
+  
+  if (!errorData || !errorData.message) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid error data'
+    });
+  }
+  
+  // Log the client error with the server logger
+  logger.error('Client-side error reported', errorData);
+  
+  // Store in database if needed
+  // db.run('INSERT INTO client_errors (message, data, user_agent, url, timestamp) VALUES (?, ?, ?, ?, ?)',
+  //   [errorData.message, JSON.stringify(errorData.data), errorData.userAgent, errorData.url, errorData.timestamp]);
+  
+  res.json({
+    success: true,
+    message: 'Error logged successfully'
+  });
+});
+
 // Download project zip endpoint
 app.get('/api/download-project/:filename', (req, res) => {
   const zipFilePath = path.join(downloadsDir, req.params.filename);
 
   // Log detailed request information
-  debug.debugLog('DOWNLOAD', 'Download project request received', {
+  logger.info('Download project request received', {
     filename: req.params.filename,
     path: zipFilePath,
     headers: req.headers,
-    query: req.query,
-    timestamp: new Date().toISOString()
+    query: req.query
   });
 
   // Check if downloads directory exists
@@ -828,12 +960,11 @@ app.get('/api/download-project/:filename', (req, res) => {
 
   if (fs.existsSync(zipFilePath)) {
     const stats = fs.statSync(zipFilePath);
-    debug.debugLog('DOWNLOAD', 'File found, preparing to stream', {
+    logger.info('File found, preparing to stream', {
       filename: req.params.filename,
       size: `${(stats.size / (1024 * 1024)).toFixed(1)} MB`,
       created: stats.birthtime,
-      modified: stats.mtime,
-      timestamp: new Date().toISOString()
+      modified: stats.mtime
     });
 
     // Set headers for file download
@@ -841,21 +972,21 @@ app.get('/api/download-project/:filename', (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${req.params.filename}"`);
     
     // Log response headers
-    debug.debugLog('DOWNLOAD', 'Response headers set', {
+    logger.debug('Response headers set', {
       headers: res.getHeaders()
     });
 
     // Stream the file instead of loading it all into memory
     try {
       const fileStream = fs.createReadStream(zipFilePath);
-      debug.debugLog('DOWNLOAD', 'File stream created successfully');
+      logger.debug('File stream created successfully');
 
       fileStream.on('open', () => {
-        debug.debugLog('DOWNLOAD', 'File stream opened successfully');
+        logger.debug('File stream opened successfully');
       });
 
       fileStream.on('data', (chunk) => {
-        debug.debugLog('DOWNLOAD', 'Streaming data chunk', {
+        logger.trace('Streaming data chunk', {
           chunkSize: chunk.length
         });
       });
@@ -867,7 +998,7 @@ app.get('/api/download-project/:filename', (req, res) => {
           stack: error.stack,
           timestamp: new Date().toISOString()
         };
-        debug.debugLog('DOWNLOAD', 'Error streaming file', errorDetails);
+        logger.error('Error streaming file', errorDetails);
         
         if (!res.headersSent) {
           res.status(500).json({
@@ -875,33 +1006,32 @@ app.get('/api/download-project/:filename', (req, res) => {
             error: 'Failed to download file: ' + error.message
           });
         } else {
-          debug.debugLog('DOWNLOAD', 'Headers already sent, cannot send error response');
+          logger.warn('Headers already sent, cannot send error response');
           res.end();
         }
       });
 
       fileStream.on('end', () => {
-        debug.debugLog('DOWNLOAD', 'File stream complete', {
-          filename: req.params.filename,
-          timestamp: new Date().toISOString()
+        logger.info('File stream complete', {
+          filename: req.params.filename
         });
         
         // Delete the file after successful download
         setTimeout(() => {
-          debug.debugLog('DOWNLOAD', 'Attempting to delete file', {
+          logger.debug('Attempting to delete file', {
             filename: req.params.filename,
             path: zipFilePath
           });
           
           fs.unlink(zipFilePath, (unlinkErr) => {
             if (unlinkErr) {
-              debug.debugLog('DOWNLOAD', 'Error deleting zip file', {
+              logger.error('Error deleting zip file', {
                 error: unlinkErr.message,
                 code: unlinkErr.code,
                 stack: unlinkErr.stack
               });
             } else {
-              debug.debugLog('DOWNLOAD', 'File deleted successfully', {
+              logger.info('File deleted successfully', {
                 filename: req.params.filename
               });
             }
@@ -910,10 +1040,10 @@ app.get('/api/download-project/:filename', (req, res) => {
       });
 
       // Pipe the file to the response
-      debug.debugLog('DOWNLOAD', 'Piping file to response');
+      logger.debug('Piping file to response');
       fileStream.pipe(res);
     } catch (error) {
-      debug.debugLog('DOWNLOAD', 'Error creating file stream', {
+      logger.error('Error creating file stream', {
         error: error.message,
         stack: error.stack
       });
@@ -924,7 +1054,7 @@ app.get('/api/download-project/:filename', (req, res) => {
       });
     }
   } else {
-    debug.debugLog('DOWNLOAD', 'File not found', {
+    logger.warn('File not found', {
       filename: req.params.filename,
       path: zipFilePath,
       downloadsDir,
@@ -944,12 +1074,20 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
 
+// Add error handler middleware (must be after all routes)
+app.use(debug.errorHandler);
+
 // Database cleanup on exit
 process.on('exit', () => {
+  logger.info('Application shutting down, closing database connection');
   db.close();
 });
 
 // Start server
 app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
+    logger.info(`Server running on port ${port}`, {
+      port,
+      environment: process.env.NODE_ENV,
+      nodeVersion: process.version
+    });
 });

@@ -36,6 +36,40 @@ let currentDownloadStats = {
 let predefinedPaths = [];
 let isDownloadPathValid = false;
 
+// Client-side error logging
+function logError(category, message, data = null) {
+    console.error(`[ERROR][${category}] ${message}`, data);
+    
+    // Report to server if enabled
+    if (window.REPORT_ERRORS_TO_SERVER) {
+        try {
+            const errorData = {
+                message,
+                data,
+                category,
+                userAgent: navigator.userAgent,
+                url: window.location.href,
+                timestamp: new Date().toISOString()
+            };
+            
+            fetch(`${API_BASE_URL}/client-error`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(errorData)
+            }).catch(err => {
+                console.error('Failed to report error to server:', err);
+            });
+        } catch (e) {
+            console.error('Error reporting error to server:', e);
+        }
+    }
+    
+    return message;
+}
+
+// Enable error reporting to server
+window.REPORT_ERRORS_TO_SERVER = true;
+
 // Load saved settings
 function loadSavedSettings() {
     const savedSettings = localStorage.getItem(STORAGE_KEY);
@@ -433,12 +467,43 @@ downloadBtn.addEventListener('click', async () => {
                 const downloadType = document.querySelector('input[name="downloadType"]:checked').value;
                 const fileFormat = document.querySelector('input[name="fileFormat"]:checked').value;
                 
-                // Set up event source for progress updates
-                const eventSource = new EventSource(`${API_BASE_URL}/download-tickets?username=${encodeURIComponent(usernameInput.value)}&apiKey=${encodeURIComponent(apiKeyInput.value)}&projectKey=${encodeURIComponent(project)}&downloadType=${downloadType}&fileFormat=${fileFormat}`);
-
+    // Set up event source for progress updates with retry logic
+    function setupEventSource(url, projectKey) {
+        let retryCount = 0;
+        const maxRetries = 5;
+        const baseDelay = 1000; // 1 second initial delay
+        let eventSource = null;
+        
+        function createEventSource() {
+            // Close previous connection if exists
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            // Create new connection
+            eventSource = new EventSource(url);
+            
+            // Connect handler
+            eventSource.onopen = () => {
+                console.log(`Connection established for ${projectKey}`);
                 
-                eventSource.onmessage = (event) => {
+                // Update UI to show reconnected if this was a retry
+                if (retryCount > 0) {
+                    updateProgress(projectKey, null, 'Reconnected - continuing download...');
+                    retryCount = 0; // Reset retry count on successful connection
+                }
+            };
+            
+            // Message handler
+            eventSource.onmessage = (event) => {
+                try {
                     const data = JSON.parse(event.data);
+                    
+                    // Handle keep-alive messages
+                    if (data.keepAlive) {
+                        console.log('Received keep-alive message:', data.timestamp);
+                        return;
+                    }
                     
                     if (data.success !== undefined) {
                         // Final response
@@ -498,13 +563,64 @@ downloadBtn.addEventListener('click', async () => {
                             break;
                     }
                     
-                    updateProgress(project, Math.round(progress), data.message);
-                };
+                    updateProgress(projectKey, Math.round(progress), data.message);
+                } catch (error) {
+                    console.error('Error processing event data:', error);
+                    logError('EVENT_SOURCE', 'Error processing event data', {
+                        error: error.message,
+                        data: event.data
+                    });
+                }
+            };
+            
+            // Error handler with retry logic
+            eventSource.onerror = (error) => {
+                console.error(`EventSource error for ${projectKey}:`, error);
                 
-                eventSource.onerror = () => {
+                if (retryCount < maxRetries) {
+                    // Close the current connection
                     eventSource.close();
-                    throw new Error('Download failed - connection lost');
-                };
+                    
+                    // Exponential backoff with jitter
+                    const delay = Math.min(30000, baseDelay * Math.pow(2, retryCount) * (0.5 + Math.random()));
+                    retryCount++;
+                    
+                    // Update UI to show retry attempt
+                    updateProgress(
+                        projectKey, 
+                        null, 
+                        `Connection lost - retrying in ${Math.round(delay/1000)}s (attempt ${retryCount}/${maxRetries})...`
+                    );
+                    
+                    console.log(`Retrying connection in ${Math.round(delay/1000)}s (attempt ${retryCount}/${maxRetries})`);
+                    
+                    // Try to reconnect after delay
+                    setTimeout(createEventSource, delay);
+                } else {
+                    // Max retries exceeded - show final error
+                    eventSource.close();
+                    updateProgress(projectKey, 100, 'Failed - Download failed - connection lost');
+                    
+                    // Log the error
+                    logError('EVENT_SOURCE', 'Max retries exceeded - connection lost', {
+                        projectKey,
+                        retries: retryCount
+                    });
+                    
+                    throw new Error('Download failed - connection lost after multiple retry attempts');
+                }
+            };
+            
+            return eventSource;
+        }
+        
+        // Start the initial connection
+        return createEventSource();
+    }
+
+    // Create EventSource with retry logic
+    const eventSourceUrl = `${API_BASE_URL}/download-tickets?username=${encodeURIComponent(usernameInput.value)}&apiKey=${encodeURIComponent(apiKeyInput.value)}&projectKey=${encodeURIComponent(project)}&downloadType=${downloadType}&fileFormat=${fileFormat}`;
+    const eventSource = setupEventSource(eventSourceUrl, project);
                 
                 // Wait for completion
                 const data = await new Promise((resolve, reject) => {

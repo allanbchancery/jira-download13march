@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Error Test Page</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 2px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        button.error {
+            background-color: #f44336;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            overflow: auto;
+        }
+        #results {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Error Test Page</h1>
+    
+    <div class="card">
+        <h2>Test Client-Side Error Reporting</h2>
+        <p>Click the buttons below to trigger different types of errors and see how they are logged.</p>
+        
+        <button id="syntaxErrorBtn" class="error">Trigger Syntax Error</button>
+        <button id="referenceErrorBtn" class="error">Trigger Reference Error</button>
+        <button id="typeErrorBtn" class="error">Trigger Type Error</button>
+        <button id="promiseErrorBtn" class="error">Trigger Promise Rejection</button>
+        <button id="fetchErrorBtn" class="error">Trigger Fetch Error</button>
+        <button id="customErrorBtn" class="error">Report Custom Error</button>
+    </div>
+    
+    <div class="card">
+        <h2>Test Performance Monitoring</h2>
+        <p>Click the buttons below to test performance monitoring.</p>
+        
+        <button id="slowOperationBtn">Simulate Slow Operation</button>
+        <button id="memoryLeakBtn">Simulate Memory Usage</button>
+    </div>
+    
+    <div class="card">
+        <h2>Test EventSource Retry Logic</h2>
+        <p>Test the EventSource connection with retry logic.</p>
+        
+        <button id="testEventSourceBtn">Test EventSource Connection</button>
+        <button id="testEventSourceRetryBtn" class="error">Test EventSource Retry</button>
+        <div id="eventSourceStatus" style="margin-top: 10px; padding: 10px; background-color: #f5f5f5; border-radius: 4px;">Status: Not connected</div>
+    </div>
+    
+    <div id="results" class="card">
+        <h2>Results</h2>
+        <pre id="output">Click a button to see results...</pre>
+    </div>
+
+    <script>
+        // Enable error reporting to server
+        window.REPORT_ERRORS_TO_SERVER = true;
+        window.API_BASE_URL = 'http://localhost:3000/api';
+        
+        // Initialize debug helpers
+        window.DEBUG_MODE = true;
+        window.LOG_LEVEL = 3; // DEBUG
+        window.clientLogs = [];
+        
+        // Log levels
+        const LOG_LEVELS = {
+            ERROR: 0,
+            WARN: 1,
+            INFO: 2,
+            DEBUG: 3,
+            TRACE: 4
+        };
+        
+        // Debug logging function
+        function debugLog(level, category, message, data = null) {
+            if (!window.DEBUG_MODE) return;
+            
+            if (LOG_LEVELS[level] > window.LOG_LEVEL) return;
+            
+            const timestamp = new Date().toISOString();
+            const logPrefix = `[${level}][${timestamp}][${category}]`;
+            
+            let formattedMessage;
+            if (data) {
+                formattedMessage = `${logPrefix} ${message}`;
+                console[level === 'ERROR' ? 'error' : level === 'WARN' ? 'warn' : 'log'](formattedMessage, data);
+            } else {
+                formattedMessage = `${logPrefix} ${message}`;
+                console[level === 'ERROR' ? 'error' : level === 'WARN' ? 'warn' : 'log'](formattedMessage);
+            }
+            
+            window.clientLogs.unshift({
+                level,
+                timestamp,
+                category,
+                message,
+                data
+            });
+            
+            if (level === 'ERROR' && window.REPORT_ERRORS_TO_SERVER) {
+                reportErrorToServer(message, data);
+            }
+        }
+        
+        // Convenience methods
+        function logError(category, message, data = null) {
+            debugLog('ERROR', category, message, data);
+        }
+        
+        function logWarn(category, message, data = null) {
+            debugLog('WARN', category, message, data);
+        }
+        
+        function logInfo(category, message, data = null) {
+            debugLog('INFO', category, message, data);
+        }
+        
+        function logDebug(category, message, data = null) {
+            debugLog('DEBUG', category, message, data);
+        }
+        
+        // Report error to server
+        function reportErrorToServer(message, data) {
+            try {
+                const errorData = {
+                    message,
+                    data,
+                    userAgent: navigator.userAgent,
+                    url: window.location.href,
+                    timestamp: new Date().toISOString()
+                };
+                
+                fetch(`${API_BASE_URL}/client-error`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(errorData)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    console.log('Error reported to server:', data);
+                    updateOutput('Error reported to server: ' + JSON.stringify(data, null, 2));
+                })
+                .catch(err => {
+                    console.error('Failed to report error to server:', err);
+                    updateOutput('Failed to report error to server: ' + err.message);
+                });
+            } catch (e) {
+                console.error('Error reporting error to server:', e);
+                updateOutput('Error reporting error to server: ' + e.message);
+            }
+        }
+        
+        // Performance monitoring
+        const performanceMarks = {};
+        
+        function startTiming(operationName) {
+            const startTime = performance.now();
+            performanceMarks[operationName] = startTime;
+            logDebug('PERFORMANCE', `Starting operation: ${operationName}`);
+        }
+        
+        function endTiming(operationName, additionalData = null) {
+            if (!performanceMarks[operationName]) {
+                logWarn('PERFORMANCE', `No start time found for operation: ${operationName}`);
+                return;
+            }
+            
+            const endTime = performance.now();
+            const duration = endTime - performanceMarks[operationName];
+            
+            logInfo('PERFORMANCE', `Operation completed: ${operationName}`, {
+                duration: `${duration.toFixed(2)}ms`,
+                ...additionalData
+            });
+            
+            delete performanceMarks[operationName];
+            return duration;
+        }
+        
+        // Global error handling
+        window.addEventListener('error', function(event) {
+            logError('GLOBAL', 'Uncaught error', {
+                message: event.message,
+                filename: event.filename,
+                lineno: event.lineno,
+                colno: event.colno,
+                error: event.error ? {
+                    name: event.error.name,
+                    message: event.error.message,
+                    stack: event.error.stack
+                } : null
+            });
+            
+            updateOutput(`Uncaught error: ${event.message}\nLine: ${event.lineno}, Column: ${event.colno}\nFile: ${event.filename}`);
+            
+            // Prevent default browser error handling
+            event.preventDefault();
+        });
+        
+        // Unhandled promise rejection handling
+        window.addEventListener('unhandledrejection', function(event) {
+            logError('PROMISE', 'Unhandled promise rejection', {
+                reason: event.reason instanceof Error ? {
+                    name: event.reason.name,
+                    message: event.reason.message,
+                    stack: event.reason.stack
+                } : event.reason
+            });
+            
+            updateOutput(`Unhandled promise rejection: ${event.reason instanceof Error ? event.reason.message : JSON.stringify(event.reason)}`);
+            
+            // Prevent default browser error handling
+            event.preventDefault();
+        });
+        
+        // Update output
+        function updateOutput(text) {
+            document.getElementById('output').textContent = text;
+        }
+        
+        // Button event handlers
+        document.getElementById('syntaxErrorBtn').addEventListener('click', function() {
+            try {
+                // This will cause a syntax error
+                eval('if (true) { console.log("Hello"); }}}');
+            } catch (error) {
+                logError('SYNTAX', 'Syntax error caught', {
+                    message: error.message,
+                    stack: error.stack
+                });
+                updateOutput(`Syntax error caught: ${error.message}\n${error.stack}`);
+            }
+        });
+        
+        document.getElementById('referenceErrorBtn').addEventListener('click', function() {
+            try {
+                // This will cause a reference error
+                const value = undefinedVariable + 5;
+            } catch (error) {
+                logError('REFERENCE', 'Reference error caught', {
+                    message: error.message,
+                    stack: error.stack
+                });
+                updateOutput(`Reference error caught: ${error.message}\n${error.stack}`);
+            }
+        });
+        
+        document.getElementById('typeErrorBtn').addEventListener('click', function() {
+            try {
+                // This will cause a type error
+                const obj = null;
+                obj.property = 'value';
+            } catch (error) {
+                logError('TYPE', 'Type error caught', {
+                    message: error.message,
+                    stack: error.stack
+                });
+                updateOutput(`Type error caught: ${error.message}\n${error.stack}`);
+            }
+        });
+        
+        document.getElementById('promiseErrorBtn').addEventListener('click', function() {
+            // This will cause a promise rejection
+            new Promise((resolve, reject) => {
+                setTimeout(() => {
+                    reject(new Error('Promise was rejected'));
+                }, 100);
+            }).catch(error => {
+                logError('PROMISE', 'Promise error caught', {
+                    message: error.message,
+                    stack: error.stack
+                });
+                updateOutput(`Promise error caught: ${error.message}\n${error.stack}`);
+            });
+        });
+        
+        document.getElementById('fetchErrorBtn').addEventListener('click', function() {
+            // This will cause a fetch error
+            fetch('http://localhost:3000/non-existent-endpoint')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .catch(error => {
+                    logError('FETCH', 'Fetch error caught', {
+                        message: error.message,
+                        stack: error.stack
+                    });
+                    updateOutput(`Fetch error caught: ${error.message}\n${error.stack}`);
+                });
+        });
+        
+        document.getElementById('customErrorBtn').addEventListener('click', function() {
+            // This will report a custom error
+            const customError = new Error('This is a custom error');
+            customError.name = 'CustomError';
+            customError.code = 'CUSTOM_ERROR_CODE';
+            
+            logError('CUSTOM', 'Custom error reported', {
+                message: customError.message,
+                name: customError.name,
+                code: customError.code,
+                stack: customError.stack
+            });
+            
+            updateOutput(`Custom error reported: ${customError.message}\nCode: ${customError.code}\n${customError.stack}`);
+        });
+        
+        document.getElementById('slowOperationBtn').addEventListener('click', function() {
+            startTiming('slowOperation');
+            updateOutput('Running slow operation...');
+            
+            // Simulate a slow operation
+            const startTime = Date.now();
+            while (Date.now() - startTime < 1000) {
+                // Busy wait for 1 second
+            }
+            
+            const duration = endTiming('slowOperation', { operationType: 'CPU-bound' });
+            updateOutput(`Slow operation completed in ${duration.toFixed(2)}ms`);
+        });
+        
+        document.getElementById('memoryLeakBtn').addEventListener('click', function() {
+            startTiming('memoryUsage');
+            updateOutput('Simulating memory usage...');
+            
+            // Simulate memory usage
+            const memoryBefore = performance.memory ? performance.memory.usedJSHeapSize : 0;
+            
+            // Create a large array
+            const largeArray = new Array(1000000).fill('test string');
+            
+            const memoryAfter = performance.memory ? performance.memory.usedJSHeapSize : 0;
+            const memoryUsed = memoryAfter - memoryBefore;
+            
+            const duration = endTiming('memoryUsage', { 
+                memoryBefore: memoryBefore,
+                memoryAfter: memoryAfter,
+                memoryUsed: memoryUsed
+            });
+            
+            updateOutput(`Memory usage simulation completed in ${duration.toFixed(2)}ms\nMemory used: ${(memoryUsed / (1024 * 1024)).toFixed(2)} MB`);
+        });
+        
+        // EventSource test functions
+        let eventSource = null;
+        
+        // Set up event source with retry logic
+        function setupEventSource(url) {
+            let retryCount = 0;
+            const maxRetries = 5;
+            const baseDelay = 1000; // 1 second initial delay
+            
+            function createEventSource() {
+                // Close previous connection if exists
+                if (eventSource) {
+                    eventSource.close();
+                }
+                
+                // Update status
+                updateEventSourceStatus('Connecting...');
+                
+                // Create new connection
+                eventSource = new EventSource(url);
+                
+                // Connect handler
+                eventSource.onopen = () => {
+                    logInfo('EVENT_SOURCE', 'Connection established');
+                    updateEventSourceStatus('Connected');
+                    
+                    // Update UI to show reconnected if this was a retry
+                    if (retryCount > 0) {
+                        updateOutput(`Reconnected after ${retryCount} retries`);
+                        retryCount = 0; // Reset retry count on successful connection
+                    } else {
+                        updateOutput('EventSource connected successfully');
+                    }
+                };
+                
+                // Message handler
+                eventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        logDebug('EVENT_SOURCE', 'Message received', data);
+                        
+                        // Handle keep-alive messages
+                        if (data.keepAlive) {
+                            updateEventSourceStatus(`Connected (last keep-alive: ${new Date().toLocaleTimeString()})`);
+                            updateOutput(`Keep-alive message received: ${data.timestamp}`);
+                            return;
+                        }
+                        
+                        updateOutput(`Message received: ${JSON.stringify(data, null, 2)}`);
+                    } catch (error) {
+                        logError('EVENT_SOURCE', 'Error processing event data', {
+                            error: error.message,
+                            data: event.data
+                        });
+                    }
+                };
+                
+                // Error handler with retry logic
+                eventSource.onerror = (error) => {
+                    logError('EVENT_SOURCE', 'Connection error', error);
+                    
+                    if (retryCount < maxRetries) {
+                        // Close the current connection
+                        eventSource.close();
+                        
+                        // Exponential backoff with jitter
+                        const delay = Math.min(30000, baseDelay * Math.pow(2, retryCount) * (0.5 + Math.random()));
+                        retryCount++;
+                        
+                        // Update UI to show retry attempt
+                        updateEventSourceStatus(`Connection lost - retrying in ${Math.round(delay/1000)}s (attempt ${retryCount}/${maxRetries})...`);
+                        updateOutput(`Connection lost - retrying in ${Math.round(delay/1000)}s (attempt ${retryCount}/${maxRetries})`);
+                        
+                        // Try to reconnect after delay
+                        setTimeout(createEventSource, delay);
+                    } else {
+                        // Max retries exceeded - show final error
+                        eventSource.close();
+                        updateEventSourceStatus('Failed - Connection lost after multiple retry attempts');
+                        updateOutput('Failed - Connection lost after multiple retry attempts');
+                        
+                        // Log the error
+                        logError('EVENT_SOURCE', 'Max retries exceeded - connection lost', {
+                            retries: retryCount
+                        });
+                    }
+                };
+                
+                return eventSource;
+            }
+            
+            // Start the initial connection
+            return createEventSource();
+        }
+        
+        function updateEventSourceStatus(status) {
+            document.getElementById('eventSourceStatus').textContent = `Status: ${status}`;
+        }
+        
+        function closeEventSource() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+                updateEventSourceStatus('Disconnected');
+                updateOutput('EventSource connection closed');
+            }
+        }
+        
+        // EventSource test button handlers
+        document.getElementById('testEventSourceBtn').addEventListener('click', function() {
+            // Close existing connection if any
+            closeEventSource();
+            
+            // Update API base URL to use test server
+            const testServerUrl = 'http://localhost:3001/api';
+            
+            // Create a new connection to the test server's SSE endpoint
+            setupEventSource(`${testServerUrl}/test-eventsource`);
+            
+            updateOutput('Connecting to test EventSource endpoint...');
+        });
+        
+        document.getElementById('testEventSourceRetryBtn').addEventListener('click', function() {
+            // This will test the retry logic by connecting to an endpoint that fails after a delay
+            closeEventSource();
+            
+            // Update API base URL to use test server
+            const testServerUrl = 'http://localhost:3001/api';
+            
+            // Connect to the failing endpoint to trigger retries
+            setupEventSource(`${testServerUrl}/test-eventsource-fail`);
+            
+            updateOutput('Connecting to test EventSource endpoint that will fail after 5 seconds...');
+        });
+        
+        // Log page load
+        logInfo('PAGE', 'Error test page loaded');
+        
+        // Clean up on page unload
+        window.addEventListener('beforeunload', function() {
+            closeEventSource();
+        });
+    </script>
+</body>
+</html>
