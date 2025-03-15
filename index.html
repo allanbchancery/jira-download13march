@@ -121,6 +121,52 @@
                         </label>
                     </div>
                 </div>
+                
+                <div class="options-section">
+                    <h4>Download Options</h4>
+                    <div class="options-grid">
+                        <label class="option-item">
+                            <input type="radio" name="downloadMode" value="foreground" checked>
+                            <div class="option-content">
+                                <i class="fas fa-desktop"></i>
+                                <span>Interactive</span>
+                                <small>Download in browser (stay online)</small>
+                            </div>
+                        </label>
+                        <label class="option-item">
+                            <input type="radio" name="downloadMode" value="background">
+                            <div class="option-content">
+                                <i class="fas fa-server"></i>
+                                <span>Background</span>
+                                <small>Download in background (can close browser)</small>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="options-section" id="downloadLocationSection">
+                    <h4>Download Location</h4>
+                    <div class="download-path-selector">
+                        <div class="form-group browse-input-group">
+                            <input type="text" id="downloadPath" name="downloadPath" placeholder="Enter download path or select from below">
+                            <div class="button-group">
+                                <button type="button" id="browseBtn" class="btn secondary">
+                                    <i class="fas fa-folder-open"></i> Browse
+                                </button>
+                                <button type="button" id="validatePathBtn" class="btn secondary">Validate</button>
+                            </div>
+                            <!-- Hidden file input for directory selection -->
+                            <input type="file" id="directoryInput" webkitdirectory directory multiple style="display:none">
+                        </div>
+                        <div class="path-validation-result"></div>
+                        <div class="predefined-paths">
+                            <h5>Common Locations:</h5>
+                            <div class="path-options">
+                                <!-- Will be populated dynamically -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
             <div id="quickNavBtn" class="quick-nav-btn" aria-label="Go to Download Options">
                 <i class="fas fa-download"></i>
@@ -272,9 +318,87 @@ ProjectKey/
                         </pre>
                     </div>
                 </details>
+                <details>
+                    <summary>What is segmented downloading?</summary>
+                    <div class="faq-content">
+                        <p>For large projects, the downloader automatically splits content into manageable 50MB segments:</p>
+                        <ul>
+                            <li>Each segment contains a subset of attachments</li>
+                            <li>Large files (>50MB) are split across multiple segments</li>
+                            <li>You can download segments individually</li>
+                            <li>Each segment shows detailed file information</li>
+                        </ul>
+                        <p>This approach prevents timeouts and allows for more reliable downloads of large projects.</p>
+                    </div>
+                </details>
+                <details>
+                    <summary>What version control features are available?</summary>
+                    <div class="faq-content">
+                        <p>The Jira Ticket Downloader includes version tracking features:</p>
+                        <ul>
+                            <li><strong>Version Tracking:</strong> Each download includes version metadata</li>
+                            <li><strong>Change Detection:</strong> The system identifies changes between downloads</li>
+                            <li><strong>Download Reports:</strong> Generate reports that include version information</li>
+                            <li><strong>Timestamp Tracking:</strong> All downloads include creation timestamps</li>
+                        </ul>
+                        <p>These features help you maintain a history of your Jira data and track changes over time.</p>
+                    </div>
+                </details>
+                <details>
+                    <summary>How does real-time progress tracking work?</summary>
+                    <div class="faq-content">
+                        <p>The application provides detailed progress information during downloads:</p>
+                        <ul>
+                            <li><strong>Overall Progress:</strong> Percentage complete for the entire operation</li>
+                            <li><strong>Time Estimates:</strong> Elapsed time and estimated time remaining</li>
+                            <li><strong>Current Operation:</strong> Details about the current processing step</li>
+                            <li><strong>File Information:</strong> Size and count statistics for the download</li>
+                            <li><strong>Stage Tracking:</strong> Visual indicators of the current download stage</li>
+                        </ul>
+                        <p>Progress updates are delivered in real-time using Server-Sent Events (SSE) technology.</p>
+                    </div>
+                </details>
+                <details>
+                    <summary>Is my data secure during downloads?</summary>
+                    <div class="faq-content">
+                        <p>Yes, the application implements several security measures:</p>
+                        <ul>
+                            <li>Your Jira credentials are never stored locally</li>
+                            <li>API keys are masked in the interface</li>
+                            <li>All communication with Jira uses secure connections</li>
+                            <li>Downloaded files are stored only on your device</li>
+                            <li>Temporary files are automatically deleted after download</li>
+                        </ul>
+                    </div>
+                </details>
+                <details>
+                    <summary>What's new in the latest version?</summary>
+                    <div class="faq-content">
+                        <p>Recent updates include:</p>
+                        <ul>
+                            <li><strong>Version: 2.1.0</strong> (Current)
+                                <ul>
+                                    <li>Added version control features</li>
+                                    <li>Improved segmented download reliability</li>
+                                    <li>Enhanced progress tracking</li>
+                                    <li>Added download reports</li>
+                                </ul>
+                            </li>
+                            <li><strong>Version: 2.0.0</strong>
+                                <ul>
+                                    <li>Redesigned user interface</li>
+                                    <li>Added CSV export option</li>
+                                    <li>Implemented segmented downloads</li>
+                                    <li>Added real-time progress tracking</li>
+                                </ul>
+                            </li>
+                        </ul>
+                    </div>
+                </details>
             </div>
         </div>
     </div>
     <script src="script.js"></script>
+    <script src="debug-helper.js"></script>
 </body>
 </html>

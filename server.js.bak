@@ -6,58 +6,16 @@ const path = require('path');
 const AdmZip = require('adm-zip');
 const fs = require('fs');
 const sqlite3 = require('sqlite3');
-
-// Import debug helpers
-const debug = require('./server-debug');
-
-// Database setup
-let db = new sqlite3.Database('jira_attachments.db');
-// Wrap database with debug logging
-db = debug.wrapDatabase(db);
+const db = new sqlite3.Database(':memory:');
 
 // Database schema setup
 db.serialize(() => {
-  db.run("CREATE TABLE IF NOT EXISTS attachments (id INTEGER PRIMARY KEY, ticket TEXT, filename TEXT, filepath TEXT, size INTEGER)");
-  db.run("CREATE TABLE IF NOT EXISTS projects (key TEXT PRIMARY KEY, name TEXT)");
-  
-  // New tables for background download functionality
-  db.run(`CREATE TABLE IF NOT EXISTS download_jobs (
-    id INTEGER PRIMARY KEY,
-    job_id TEXT UNIQUE,
-    username TEXT,
-    api_key TEXT,
-    project_key TEXT,
-    download_type TEXT,
-    file_format TEXT,
-    download_path TEXT,
-    status TEXT,
-    created_at TEXT,
-    updated_at TEXT,
-    completed_at TEXT,
-    error TEXT
-  )`);
-  
-  db.run(`CREATE TABLE IF NOT EXISTS download_segments (
-    id INTEGER PRIMARY KEY,
-    job_id TEXT,
-    segment_number INTEGER,
-    total_segments INTEGER,
-    status TEXT,
-    file_path TEXT,
-    file_count INTEGER,
-    size_bytes INTEGER,
-    created_at TEXT,
-    updated_at TEXT
-  )`);
+  db.run("CREATE TABLE attachments (id INTEGER PRIMARY KEY, ticket TEXT, filename TEXT, filepath TEXT, size INTEGER)");
+  db.run("CREATE TABLE projects (key TEXT PRIMARY KEY, name TEXT)");
 });
 
 // Load environment variables
 dotenv.config();
-
-// Import background processing modules
-let queueManager = require('./workers/queue-manager');
-// Wrap queue manager with debug logging
-queueManager = debug.wrapQueueManager(queueManager);
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -65,27 +23,10 @@ const port = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(debug.debugMiddleware); // Add debug middleware
 
 // Serve static files
 app.use(express.static(__dirname));
 app.use('/downloads', express.static(path.join(__dirname, 'downloads')));
-
-// Initialize download queue
-const downloadQueue = queueManager.initializeQueue(db);
-
-// Schedule cleanup of old jobs
-setInterval(() => {
-  queueManager.cleanupOldJobs(db)
-    .then(count => {
-      if (count > 0) {
-        console.log(`Cleaned up ${count} old jobs`);
-      }
-    })
-    .catch(err => {
-      console.error('Error cleaning up old jobs:', err);
-    });
-}, 24 * 60 * 60 * 1000); // Run once per day
 
 // Utility function to create Jira API headers
 const createJiraHeaders = (auth) => ({
@@ -672,164 +613,19 @@ app.get('/api/download-tickets', async (req, res) => {
   }
 });
 
-// Background download endpoints
-
-// Submit a background download job
-app.post('/api/submit-download-job', async (req, res) => {
-  const { username, apiKey, projectKey, downloadType, fileFormat, downloadPath } = req.body;
-  
-  if (!username || !apiKey || !projectKey) {
-    return res.status(400).json({
-      success: false,
-      error: 'Missing required parameters'
-    });
-  }
-  
-  try {
-    // Validate credentials
-    const auth = Buffer.from(`${username}:${apiKey}`).toString('base64');
-    const testResponse = await axios.get('https://thehut.atlassian.net/rest/api/2/myself', {
-      headers: {
-        'Authorization': `Basic ${auth}`,
-        'Accept': 'application/json'
-      }
-    });
-    
-    // Validate download path if provided
-    if (downloadPath) {
-      const pathValidation = await queueManager.validateDownloadPath(downloadPath);
-      if (!pathValidation.valid) {
-        return res.status(400).json({
-          success: false,
-          error: `Invalid download path: ${pathValidation.error}`
-        });
-      }
-    }
-    
-    // Add job to queue
-    const job = await queueManager.addJob(db, downloadQueue, {
-      username,
-      apiKey,
-      projectKey,
-      downloadType,
-      fileFormat,
-      downloadPath
-    });
-    
-    res.json({
-      success: true,
-      message: 'Download job submitted successfully',
-      job
-    });
-  } catch (error) {
-    console.error('Error submitting download job:', error);
-    res.status(error.response?.status || 500).json({
-      success: false,
-      error: error.message || 'Failed to submit download job'
-    });
-  }
-});
-
-// Get all download jobs
-app.get('/api/download-jobs', async (req, res) => {
-  try {
-    const jobs = await queueManager.getJobs(db);
-    res.json({
-      success: true,
-      jobs
-    });
-  } catch (error) {
-    console.error('Error getting download jobs:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to get download jobs'
-    });
-  }
-});
-
-// Get job status
-app.get('/api/download-job/:jobId', async (req, res) => {
-  try {
-    const job = await queueManager.getJobById(db, req.params.jobId);
-    res.json({
-      success: true,
-      job
-    });
-  } catch (error) {
-    console.error('Error getting job status:', error);
-    res.status(error.message === 'Job not found' ? 404 : 500).json({
-      success: false,
-      error: error.message || 'Failed to get job status'
-    });
-  }
-});
-
-// Cancel job
-app.post('/api/cancel-download-job/:jobId', async (req, res) => {
-  try {
-    await queueManager.cancelJob(db, downloadQueue, req.params.jobId);
-    res.json({
-      success: true,
-      message: 'Job cancelled successfully'
-    });
-  } catch (error) {
-    console.error('Error cancelling job:', error);
-    res.status(error.message === 'Job not found' ? 404 : 500).json({
-      success: false,
-      error: error.message || 'Failed to cancel job'
-    });
-  }
-});
-
-// Validate download path
-app.post('/api/validate-download-path', async (req, res) => {
-  const { path } = req.body;
-  
-  if (!path) {
-    return res.status(400).json({
-      success: false,
-      error: 'Path is required'
-    });
-  }
-  
-  try {
-    const validation = await queueManager.validateDownloadPath(path);
-    res.json({
-      success: true,
-      validation
-    });
-  } catch (error) {
-    console.error('Error validating path:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message || 'Failed to validate path'
-    });
-  }
-});
-
 // Download project zip endpoint
 app.get('/api/download-project/:filename', (req, res) => {
   const zipFilePath = path.join(downloadsDir, req.params.filename);
 
-  // Log detailed request information
-  debug.debugLog('DOWNLOAD', 'Download project request received', {
+  console.log('Download project request:', {
     filename: req.params.filename,
     path: zipFilePath,
-    headers: req.headers,
-    query: req.query,
     timestamp: new Date().toISOString()
   });
 
-  // Check if downloads directory exists
-  debug.debugFileSystem('CHECK_DIR', downloadsDir);
-
-  // Check if file exists and log detailed information
-  debug.debugFileSystem('CHECK_FILE', zipFilePath);
-
   if (fs.existsSync(zipFilePath)) {
     const stats = fs.statSync(zipFilePath);
-    debug.debugLog('DOWNLOAD', 'File found, preparing to stream', {
-      filename: req.params.filename,
+    console.log('File stats:', {
       size: `${(stats.size / (1024 * 1024)).toFixed(1)} MB`,
       created: stats.birthtime,
       modified: stats.mtime,
@@ -839,102 +635,65 @@ app.get('/api/download-project/:filename', (req, res) => {
     // Set headers for file download
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${req.params.filename}"`);
-    
-    // Log response headers
-    debug.debugLog('DOWNLOAD', 'Response headers set', {
-      headers: res.getHeaders()
-    });
 
     // Stream the file instead of loading it all into memory
-    try {
-      const fileStream = fs.createReadStream(zipFilePath);
-      debug.debugLog('DOWNLOAD', 'File stream created successfully');
+    const fileStream = fs.createReadStream(zipFilePath);
 
-      fileStream.on('open', () => {
-        debug.debugLog('DOWNLOAD', 'File stream opened successfully');
-      });
-
-      fileStream.on('data', (chunk) => {
-        debug.debugLog('DOWNLOAD', 'Streaming data chunk', {
-          chunkSize: chunk.length
-        });
-      });
-
-      fileStream.on('error', (error) => {
-        const errorDetails = {
-          message: error.message,
-          code: error.code,
-          stack: error.stack,
-          timestamp: new Date().toISOString()
-        };
-        debug.debugLog('DOWNLOAD', 'Error streaming file', errorDetails);
-        
-        if (!res.headersSent) {
-          res.status(500).json({
-            success: false,
-            error: 'Failed to download file: ' + error.message
-          });
-        } else {
-          debug.debugLog('DOWNLOAD', 'Headers already sent, cannot send error response');
-          res.end();
-        }
-      });
-
-      fileStream.on('end', () => {
-        debug.debugLog('DOWNLOAD', 'File stream complete', {
-          filename: req.params.filename,
-          timestamp: new Date().toISOString()
-        });
-        
-        // Delete the file after successful download
-        setTimeout(() => {
-          debug.debugLog('DOWNLOAD', 'Attempting to delete file', {
-            filename: req.params.filename,
-            path: zipFilePath
-          });
-          
-          fs.unlink(zipFilePath, (unlinkErr) => {
-            if (unlinkErr) {
-              debug.debugLog('DOWNLOAD', 'Error deleting zip file', {
-                error: unlinkErr.message,
-                code: unlinkErr.code,
-                stack: unlinkErr.stack
-              });
-            } else {
-              debug.debugLog('DOWNLOAD', 'File deleted successfully', {
-                filename: req.params.filename
-              });
-            }
-          });
-        }, 1000); // Wait 1 second before deleting
-      });
-
-      // Pipe the file to the response
-      debug.debugLog('DOWNLOAD', 'Piping file to response');
-      fileStream.pipe(res);
-    } catch (error) {
-      debug.debugLog('DOWNLOAD', 'Error creating file stream', {
-        error: error.message,
-        stack: error.stack
-      });
-      
+    fileStream.on('error', (error) => {
+      const errorDetails = {
+        message: error.message,
+        code: error.code,
+        stack: error.stack,
+        timestamp: new Date().toISOString()
+      };
+      console.error('Error streaming file:', errorDetails);
       res.status(500).json({
         success: false,
-        error: 'Failed to create file stream: ' + error.message
+        error: 'Failed to download file'
       });
-    }
+    });
+
+    fileStream.on('end', () => {
+      console.log('File stream complete:', {
+        filename: req.params.filename,
+        timestamp: new Date().toISOString()
+      });
+      // Delete the file after successful download
+      setTimeout(() => {
+        console.log('Attempting to delete file:', {
+          filename: req.params.filename,
+          path: zipFilePath,
+          timestamp: new Date().toISOString()
+        });
+        fs.unlink(zipFilePath, (unlinkErr) => {
+          if (unlinkErr) {
+            console.error('Error deleting zip file:', {
+              error: unlinkErr.message,
+              code: unlinkErr.code,
+              stack: unlinkErr.stack,
+              timestamp: new Date().toISOString()
+            });
+          } else {
+            console.log('File deleted successfully:', {
+              filename: req.params.filename,
+              timestamp: new Date().toISOString()
+            });
+          }
+        });
+      }, 1000); // Wait 1 second before deleting
+    });
+
+    // Pipe the file to the response
+    fileStream.pipe(res);
   } else {
-    debug.debugLog('DOWNLOAD', 'File not found', {
+    console.error('File not found:', {
       filename: req.params.filename,
       path: zipFilePath,
-      downloadsDir,
-      downloadsExists: fs.existsSync(downloadsDir),
-      filesInDownloads: fs.existsSync(downloadsDir) ? fs.readdirSync(downloadsDir) : []
+      timestamp: new Date().toISOString()
     });
-    
     res.status(404).json({
       success: false,
-      error: 'File not found: ' + req.params.filename
+      error: 'File not found'
     });
   }
 });

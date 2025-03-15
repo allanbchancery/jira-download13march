@@ -1,0 +1,10 @@
+> git -c user.useConfigOnly=true commit --quiet
+Error: connect ENOENT /var/folders/m4/6t7dcgxs49bcqswmqtm5xhl80000gp/T/vscode-git-105895a99c.sock
+    at PipeConnectWrap.afterConnect [as oncomplete] (node:net:1611:16) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'connect',
+  address: '/var/folders/m4/6t7dcgxs49bcqswmqtm5xhl80000gp/T/vscode-git-105895a99c.sock'
+}
+error: There was a problem with the editor '"/Applications/Visual Studio Code.app/Contents/Resources/app/extensions/git/dist/git-editor.sh"'.
+Please supply the message using either -m or -F option.

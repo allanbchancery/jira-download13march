@@ -15,6 +15,13 @@ const downloadProgress = document.getElementById('downloadProgress');
 const downloadSummary = document.getElementById('downloadSummary');
 const downloadReportBtn = document.getElementById('downloadReportBtn');
 const newDownloadBtn = document.getElementById('newDownloadBtn');
+const downloadLocationSection = document.getElementById('downloadLocationSection');
+const downloadPathInput = document.getElementById('downloadPath');
+const validatePathBtn = document.getElementById('validatePathBtn');
+const browseBtn = document.getElementById('browseBtn');
+const directoryInput = document.getElementById('directoryInput');
+const pathValidationResult = document.querySelector('.path-validation-result');
+const pathOptions = document.querySelector('.path-options');
 
 // State
 let isConnected = false;
@@ -26,6 +33,8 @@ let currentDownloadStats = {
     totalAttachments: 0,
     failedProjects: []
 };
+let predefinedPaths = [];
+let isDownloadPathValid = false;
 
 // Load saved settings
 function loadSavedSettings() {
@@ -302,6 +311,56 @@ downloadBtn.addEventListener('click', async () => {
         return;
     }
     
+    // Get download mode
+    const downloadMode = document.querySelector('input[name="downloadMode"]:checked').value;
+    
+    // Handle background download
+    if (downloadMode === 'background') {
+        // Validate download path if provided
+        if (downloadPathInput.value.trim() && !isDownloadPathValid) {
+            showError('Please validate the download path first', downloadLocationSection);
+            return;
+        }
+        
+        // Show loading state
+        downloadBtn.disabled = true;
+        const btnText = downloadBtn.querySelector('.btn-text');
+        const spinner = downloadBtn.querySelector('.spinner');
+        btnText.textContent = 'Submitting...';
+        spinner.classList.remove('hidden');
+        
+        try {
+            // Submit background jobs for each selected project
+            const jobs = [];
+            for (const project of selectedProjects) {
+                const job = await submitBackgroundDownloadJob(project);
+                jobs.push(job);
+            }
+            
+            // Show success message
+            showSuccess(`${jobs.length} background download jobs submitted successfully`, projectSelection);
+            
+            // Update jobs dashboard
+            await updateJobsDashboard();
+            
+            // Scroll to jobs dashboard
+            const jobsDashboard = document.querySelector('.jobs-dashboard');
+            if (jobsDashboard) {
+                jobsDashboard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        } catch (error) {
+            showError(error.message, projectSelection);
+        } finally {
+            // Reset button state
+            downloadBtn.disabled = false;
+            btnText.textContent = 'Download Selected';
+            spinner.classList.add('hidden');
+        }
+        
+        return;
+    }
+    
+    // Handle foreground download (original implementation)
     // Reset state
     shouldCancel = false;
     isDownloading = true;
@@ -696,5 +755,597 @@ projectList.addEventListener('change', (e) => {
     }
 });
 
+// Fetch predefined download paths
+async function fetchPredefinedPaths() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/validate-download-path`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ path: '' }) // Empty path to get defaults
+        });
+        
+        const data = await response.json();
+        if (data.success && data.validation && data.validation.predefinedPaths) {
+            predefinedPaths = data.validation.predefinedPaths;
+            populatePredefinedPaths();
+        }
+    } catch (error) {
+        console.error('Failed to fetch predefined paths:', error);
+    }
+}
+
+// Populate predefined paths UI
+function populatePredefinedPaths() {
+    pathOptions.innerHTML = '';
+    
+    predefinedPaths.forEach(path => {
+        const pathOption = document.createElement('div');
+        pathOption.className = 'path-option';
+        pathOption.textContent = path.label || path.path;
+        pathOption.dataset.path = path.path;
+        pathOption.addEventListener('click', () => {
+            downloadPathInput.value = path.path;
+            document.querySelectorAll('.path-option').forEach(opt => {
+                opt.classList.remove('selected');
+            });
+            pathOption.classList.add('selected');
+            validateDownloadPath();
+        });
+        pathOptions.appendChild(pathOption);
+    });
+}
+
+// Validate download path
+async function validateDownloadPath() {
+    const path = downloadPathInput.value.trim();
+    if (!path) {
+        pathValidationResult.innerHTML = '';
+        pathValidationResult.className = 'path-validation-result';
+        isDownloadPathValid = false;
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/validate-download-path`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ path })
+        });
+        
+        const data = await response.json();
+        if (data.success && data.validation) {
+            if (data.validation.valid) {
+                pathValidationResult.innerHTML = `<i class="fas fa-check-circle"></i> Valid path (${data.validation.availableSpace} available)`;
+                pathValidationResult.className = 'path-validation-result valid';
+                isDownloadPathValid = true;
+            } else {
+                pathValidationResult.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${data.validation.error}`;
+                pathValidationResult.className = 'path-validation-result invalid';
+                isDownloadPathValid = false;
+            }
+        } else {
+            throw new Error(data.error || 'Failed to validate path');
+        }
+    } catch (error) {
+        pathValidationResult.innerHTML = `<i class="fas fa-exclamation-circle"></i> ${error.message}`;
+        pathValidationResult.className = 'path-validation-result invalid';
+        isDownloadPathValid = false;
+    }
+}
+
+// Submit background download job
+async function submitBackgroundDownloadJob(projectKey) {
+    const username = usernameInput.value.trim();
+    const apiKey = apiKeyInput.value.trim();
+    const downloadType = document.querySelector('input[name="downloadType"]:checked').value;
+    const fileFormat = document.querySelector('input[name="fileFormat"]:checked').value;
+    const downloadPath = downloadPathInput.value.trim();
+    
+    try {
+        const response = await fetch(`${API_BASE_URL}/submit-download-job`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                username,
+                apiKey,
+                projectKey,
+                downloadType,
+                fileFormat,
+                downloadPath: isDownloadPathValid ? downloadPath : undefined
+            })
+        });
+        
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to submit download job');
+        }
+        
+        return data.job;
+    } catch (error) {
+        throw new Error(`Failed to submit background job: ${error.message}`);
+    }
+}
+
+// Fetch download jobs
+async function fetchDownloadJobs() {
+    try {
+        const response = await fetch(`${API_BASE_URL}/download-jobs`);
+        const data = await response.json();
+        
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to fetch download jobs');
+        }
+        
+        return data.jobs;
+    } catch (error) {
+        console.error('Failed to fetch download jobs:', error);
+        return [];
+    }
+}
+
+// Get job status
+async function getJobStatus(jobId) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/download-job/${jobId}`);
+        const data = await response.json();
+        
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to get job status');
+        }
+        
+        return data.job;
+    } catch (error) {
+        console.error(`Failed to get job status for ${jobId}:`, error);
+        return null;
+    }
+}
+
+// Cancel download job
+async function cancelDownloadJob(jobId) {
+    try {
+        const response = await fetch(`${API_BASE_URL}/cancel-download-job/${jobId}`, {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        if (!data.success) {
+            throw new Error(data.error || 'Failed to cancel job');
+        }
+        
+        return true;
+    } catch (error) {
+        console.error(`Failed to cancel job ${jobId}:`, error);
+        return false;
+    }
+}
+
+// Create jobs dashboard
+function createJobsDashboard() {
+    // Create dashboard container if it doesn't exist
+    let jobsDashboard = document.querySelector('.jobs-dashboard');
+    if (!jobsDashboard) {
+        jobsDashboard = document.createElement('div');
+        jobsDashboard.className = 'jobs-dashboard';
+        jobsDashboard.innerHTML = `
+            <h3>
+                Background Downloads
+                <button id="refreshJobsBtn" class="btn secondary">
+                    <i class="fas fa-sync-alt"></i> Refresh
+                </button>
+            </h3>
+            <div class="tabs-container">
+                <div class="tabs-nav">
+                    <div class="tab-item active" data-tab="active-jobs">Active Jobs</div>
+                    <div class="tab-item" data-tab="completed-jobs">Completed Jobs</div>
+                </div>
+                <div class="tab-content active" id="active-jobs">
+                    <div class="jobs-list active-jobs-list"></div>
+                </div>
+                <div class="tab-content" id="completed-jobs">
+                    <div class="jobs-list completed-jobs-list"></div>
+                </div>
+            </div>
+        `;
+        
+        // Add dashboard to the page
+        downloadSummary.parentNode.insertBefore(jobsDashboard, downloadSummary);
+        
+        // Add tab switching functionality
+        const tabItems = jobsDashboard.querySelectorAll('.tab-item');
+        tabItems.forEach(tab => {
+            tab.addEventListener('click', () => {
+                tabItems.forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                
+                const tabContents = jobsDashboard.querySelectorAll('.tab-content');
+                tabContents.forEach(content => {
+                    content.classList.remove('active');
+                });
+                
+                const tabContent = document.getElementById(tab.dataset.tab);
+                tabContent.classList.add('active');
+            });
+        });
+        
+        // Add refresh button functionality
+        const refreshBtn = jobsDashboard.querySelector('#refreshJobsBtn');
+        refreshBtn.addEventListener('click', () => {
+            refreshBtn.disabled = true;
+            refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+            
+            updateJobsDashboard().finally(() => {
+                refreshBtn.disabled = false;
+                refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh';
+            });
+        });
+    }
+    
+    return jobsDashboard;
+}
+
+// Update jobs dashboard
+async function updateJobsDashboard() {
+    const jobsDashboard = createJobsDashboard();
+    const activeJobsList = jobsDashboard.querySelector('.active-jobs-list');
+    const completedJobsList = jobsDashboard.querySelector('.completed-jobs-list');
+    
+    try {
+        const jobs = await fetchDownloadJobs();
+        
+        // Clear existing jobs
+        activeJobsList.innerHTML = '';
+        completedJobsList.innerHTML = '';
+        
+        if (jobs.length === 0) {
+            activeJobsList.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-inbox"></i>
+                    <p>No active download jobs</p>
+                </div>
+            `;
+            
+            completedJobsList.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-inbox"></i>
+                    <p>No completed download jobs</p>
+                </div>
+            `;
+            return;
+        }
+        
+        // Sort jobs by creation date (newest first)
+        jobs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        
+        // Split jobs into active and completed
+        const activeJobs = jobs.filter(job => ['pending', 'processing'].includes(job.status));
+        const completedJobs = jobs.filter(job => ['completed', 'failed', 'cancelled'].includes(job.status));
+        
+        // Populate active jobs
+        if (activeJobs.length === 0) {
+            activeJobsList.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-inbox"></i>
+                    <p>No active download jobs</p>
+                </div>
+            `;
+        } else {
+            activeJobs.forEach(job => {
+                const jobCard = createJobCard(job);
+                activeJobsList.appendChild(jobCard);
+            });
+        }
+        
+        // Populate completed jobs
+        if (completedJobs.length === 0) {
+            completedJobsList.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-inbox"></i>
+                    <p>No completed download jobs</p>
+                </div>
+            `;
+        } else {
+            completedJobs.forEach(job => {
+                const jobCard = createJobCard(job);
+                completedJobsList.appendChild(jobCard);
+            });
+        }
+    } catch (error) {
+        console.error('Failed to update jobs dashboard:', error);
+    }
+}
+
+// Create job card
+function createJobCard(job) {
+    const jobCard = document.createElement('div');
+    jobCard.className = 'job-card';
+    jobCard.dataset.jobId = job.job_id;
+    
+    // Format dates
+    const createdDate = new Date(job.created_at).toLocaleString();
+    const updatedDate = new Date(job.updated_at).toLocaleString();
+    const completedDate = job.completed_at ? new Date(job.completed_at).toLocaleString() : null;
+    
+    // Calculate duration
+    let duration = 'In progress';
+    if (job.completed_at) {
+        const durationMs = new Date(job.completed_at) - new Date(job.created_at);
+        const durationMin = Math.floor(durationMs / 60000);
+        const durationSec = Math.floor((durationMs % 60000) / 1000);
+        duration = `${durationMin}m ${durationSec}s`;
+    }
+    
+    jobCard.innerHTML = `
+        <div class="job-header">
+            <div class="job-title">${job.project_key}</div>
+            <div class="job-status ${job.status}">${job.status}</div>
+        </div>
+        <div class="job-details">
+            <div class="job-detail">
+                <div class="job-detail-label">Download Type</div>
+                <div class="job-detail-value">${job.download_type === 'all' ? 'Everything' : job.download_type === 'tickets' ? 'Tickets Only' : 'Attachments Only'}</div>
+            </div>
+            <div class="job-detail">
+                <div class="job-detail-label">Format</div>
+                <div class="job-detail-value">${job.file_format.toUpperCase()}</div>
+            </div>
+            <div class="job-detail">
+                <div class="job-detail-label">Created</div>
+                <div class="job-detail-value">${createdDate}</div>
+            </div>
+            <div class="job-detail">
+                <div class="job-detail-label">Duration</div>
+                <div class="job-detail-value">${duration}</div>
+            </div>
+        </div>
+        ${job.status === 'processing' ? `
+            <div class="job-progress">
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: 50%"></div>
+                </div>
+                <div class="progress-text">Processing...</div>
+            </div>
+        ` : ''}
+        ${job.error ? `
+            <div class="error-message">
+                <i class="fas fa-exclamation-circle"></i>
+                ${job.error}
+            </div>
+        ` : ''}
+        ${job.segments && job.segments.length > 0 ? `
+            <div class="job-segments">
+                <h4>Download Segments (${job.segments.length})</h4>
+                <div class="segment-list">
+                    ${job.segments.map(segment => `
+                        <div class="segment-card ${segment.status}">
+                            <div class="segment-card-title">Segment ${segment.segment_number}</div>
+                            <div class="segment-card-info">${segment.file_count} files</div>
+                            <div class="segment-card-info">${(segment.size_bytes / (1024 * 1024)).toFixed(1)} MB</div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        ` : ''}
+        <div class="job-actions">
+            ${job.status === 'pending' ? `
+                <button class="btn secondary cancel-job-btn">Cancel</button>
+            ` : ''}
+            ${job.status === 'completed' ? `
+                <button class="btn secondary view-files-btn">View Files</button>
+            ` : ''}
+        </div>
+    `;
+    
+    // Add event listeners
+    if (job.status === 'pending') {
+        const cancelBtn = jobCard.querySelector('.cancel-job-btn');
+        cancelBtn.addEventListener('click', async () => {
+            cancelBtn.disabled = true;
+            cancelBtn.textContent = 'Cancelling...';
+            
+            try {
+                const success = await cancelDownloadJob(job.job_id);
+                if (success) {
+                    jobCard.querySelector('.job-status').textContent = 'cancelled';
+                    jobCard.querySelector('.job-status').className = 'job-status cancelled';
+                    cancelBtn.remove();
+                } else {
+                    throw new Error('Failed to cancel job');
+                }
+            } catch (error) {
+                cancelBtn.textContent = 'Cancel';
+                cancelBtn.disabled = false;
+                alert(`Error: ${error.message}`);
+            }
+        });
+    }
+    
+    // Add View Files button handler for completed jobs
+    if (job.status === 'completed') {
+        const viewFilesBtn = jobCard.querySelector('.view-files-btn');
+        
+        if (viewFilesBtn) {
+            console.log('Adding View Files button handler for job:', job.job_id);
+            console.log('Job segments:', job.segments);
+            
+            viewFilesBtn.addEventListener('click', () => {
+                console.log('View Files button clicked for job:', job.job_id);
+                
+                try {
+                    // Check if segments exist
+                    if (!job.segments || !Array.isArray(job.segments)) {
+                        console.error('No segments found for job:', job.job_id);
+                        alert('No download segments found for this job. Please try refreshing the page.');
+                        return;
+                    }
+                    
+                    if (job.segments.length === 0) {
+                        console.error('Empty segments array for job:', job.job_id);
+                        alert('No download segments available for this job.');
+                        return;
+                    }
+                    
+                    console.log('Creating files dialog with segments:', job.segments);
+                    
+                    // Show files dialog
+                    const filesDialog = document.createElement('div');
+                    filesDialog.className = 'download-dialog';
+                    filesDialog.innerHTML = `
+                        <div class="download-dialog-content">
+                            <h3>Download Files</h3>
+                            <p>Project: ${job.project_key}</p>
+                            <div class="segments-list">
+                                ${job.segments.map(segment => `
+                                    <div class="segment-item">
+                                        <div class="segment-header">
+                                            <h4>Segment ${segment.segment_number} of ${segment.total_segments}</h4>
+                                            <p>Size: ${(segment.size_bytes / (1024 * 1024)).toFixed(1)} MB (${segment.file_count} files)</p>
+                                        </div>
+                                        <button class="btn secondary download-segment" data-path="${segment.file_path}">
+                                            Download Segment ${segment.segment_number}
+                                        </button>
+                                    </div>
+                                `).join('')}
+                            </div>
+                            <button class="btn primary close-dialog">Close</button>
+                        </div>
+                    `;
+                    document.body.appendChild(filesDialog);
+                    
+                    console.log('Files dialog created and added to DOM');
+                    
+                    // Add download handlers
+                    const downloadButtons = filesDialog.querySelectorAll('.download-segment');
+                    console.log('Found download buttons:', downloadButtons.length);
+                    
+                    downloadButtons.forEach(button => {
+                        const filePath = button.dataset.path;
+                        console.log('Adding click handler for segment with path:', filePath);
+                        
+                        button.addEventListener('click', async () => {
+                            console.log('Download segment button clicked for path:', filePath);
+                            
+                            if (!filePath) {
+                                console.error('No file path found in button data attribute');
+                                alert('Error: No file path found for this segment');
+                                return;
+                            }
+                            
+                            const fileName = filePath.split('/').pop();
+                            console.log('Extracted filename:', fileName);
+                            
+                            button.disabled = true;
+                            button.textContent = 'Downloading...';
+                            
+                            try {
+                                console.log('Fetching segment file:', fileName);
+                                const zipResponse = await fetch(`${API_BASE_URL}/download-project/${fileName}`);
+                                
+                                if (!zipResponse.ok) {
+                                    console.error('Failed to download segment:', zipResponse.status, zipResponse.statusText);
+                                    throw new Error(`Failed to download segment: ${zipResponse.status} ${zipResponse.statusText}`);
+                                }
+                                
+                                console.log('Segment file fetched successfully, creating blob');
+                                const blob = await zipResponse.blob();
+                                const url = window.URL.createObjectURL(blob);
+                                
+                                console.log('Creating download link for blob URL:', url);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = fileName;
+                                document.body.appendChild(a);
+                                
+                                console.log('Triggering download');
+                                a.click();
+                                document.body.removeChild(a);
+                                window.URL.revokeObjectURL(url);
+                                
+                                console.log('Download complete');
+                                button.textContent = 'Downloaded';
+                                button.classList.add('success');
+                            } catch (error) {
+                                console.error('Error downloading segment:', error);
+                                button.textContent = 'Failed - Try Again';
+                                button.disabled = false;
+                                button.classList.add('error');
+                                alert(`Download failed: ${error.message}`);
+                            }
+                        });
+                    });
+                    
+                    // Add close handler
+                    const closeButton = filesDialog.querySelector('.close-dialog');
+                    console.log('Adding close button handler');
+                    
+                    closeButton.addEventListener('click', () => {
+                        console.log('Close button clicked, removing dialog');
+                        filesDialog.remove();
+                    });
+                    
+                } catch (error) {
+                    console.error('Error creating files dialog:', error);
+                    alert(`Error: ${error.message}`);
+                }
+            });
+        } else {
+            console.error('View Files button not found in job card for job:', job.job_id);
+        }
+    }
+    
+    return jobCard;
+}
+
+// Toggle download mode
+function toggleDownloadMode() {
+    const downloadMode = document.querySelector('input[name="downloadMode"]:checked').value;
+    downloadLocationSection.style.display = downloadMode === 'background' ? 'block' : 'none';
+}
+
+// Event listeners for download mode and path validation
+document.querySelectorAll('input[name="downloadMode"]').forEach(radio => {
+    radio.addEventListener('change', toggleDownloadMode);
+});
+
+validatePathBtn.addEventListener('click', validateDownloadPath);
+downloadPathInput.addEventListener('blur', validateDownloadPath);
+
+// Handle browse button click
+browseBtn.addEventListener('click', () => {
+    // Trigger the hidden file input
+    directoryInput.click();
+});
+
+// Handle directory selection
+directoryInput.addEventListener('change', (event) => {
+    if (event.target.files.length > 0) {
+        // Get the directory path from the first file
+        const file = event.target.files[0];
+        const filePath = file.webkitRelativePath;
+        
+        // Extract the directory path (remove the filename part)
+        const directoryPath = filePath.split('/')[0];
+        
+        if (directoryPath) {
+            // Set the directory path in the input field
+            const fullPath = `/Users/${directoryPath}`;
+            downloadPathInput.value = fullPath;
+            
+            // Validate the path
+            validateDownloadPath();
+        }
+    }
+});
+
 // Initialize
 loadSavedSettings();
+fetchPredefinedPaths();
+toggleDownloadMode();
+
+// Set up periodic job status updates
+setInterval(updateJobsDashboard, 10000); // Update every 10 seconds
