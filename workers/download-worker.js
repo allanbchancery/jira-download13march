@@ -330,14 +330,46 @@ async function processDownloadJob(job, db) {
         for (const file of segment.files) {
           const { ticket, attachment, partNumber, totalParts, startByte, endByte } = file;
 
-          // Get attachment data with retry logic already configured
-          const attachmentResponse = await axios.get(attachment.content, {
-            headers: {
-              ...headers,
-              Range: `bytes=${startByte}-${endByte - 1}`
-            },
-            responseType: 'arraybuffer'
-          });
+          // Get attachment data with progressive timeout for larger files
+          const fileSize = endByte - startByte;
+          const progressiveTimeout = Math.min(
+            defaults.api.timeout,
+            defaults.api.timeout * (1 + (fileSize / (10 * 1024 * 1024))) // Increase timeout for larger files
+          );
+          
+          // Try to download with progressively increasing timeouts on failure
+          let attachmentResponse;
+          let retryCount = 0;
+          const maxRetries = defaults.api.maxRetries;
+          
+          while (retryCount <= maxRetries) {
+            try {
+              attachmentResponse = await axios.get(attachment.content, {
+                headers: {
+                  ...headers,
+                  Range: `bytes=${startByte}-${endByte - 1}`
+                },
+                responseType: 'arraybuffer',
+                timeout: progressiveTimeout * (retryCount + 1) // Increase timeout with each retry
+              });
+              
+              // If successful, break out of retry loop
+              break;
+            } catch (downloadError) {
+              retryCount++;
+              
+              // If we've exhausted retries, throw the error
+              if (retryCount > maxRetries) {
+                throw downloadError;
+              }
+              
+              // Log retry attempt
+              console.log(`[Job ${job_id}] Retrying download for ${attachment.filename} (${retryCount}/${maxRetries})`);
+              
+              // Wait before retrying
+              await new Promise(resolve => setTimeout(resolve, defaults.api.retryDelay * retryCount));
+            }
+          }
 
           // Add to zip with part number if split
           const filename = totalParts > 1
@@ -405,8 +437,16 @@ async function processDownloadJob(job, db) {
   } catch (error) {
     console.error(`[Job ${job_id}] Error:`, error);
     
+    // Determine error type for better error messages
+    let errorMessage = error.message || 'Unknown error occurred';
+    
+    // Handle timeout errors specifically
+    if (error.code === 'ECONNABORTED' || errorMessage.includes('timeout')) {
+      errorMessage = `Request timed out. The server took too long to respond. Try again later or contact your administrator if the issue persists.`;
+      console.log(`[Job ${job_id}] Timeout error detected. Original error:`, error);
+    }
+    
     // Update job status to failed
-    const errorMessage = error.message || 'Unknown error occurred';
     await updateJobStatus(db, job_id, 'failed', errorMessage);
     
     // Send notification

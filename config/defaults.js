@@ -11,7 +11,7 @@ module.exports = {
   // API configuration
   api: {
     baseUrl: 'https://thehut.atlassian.net/rest/api/2',
-    timeout: 30000, // 30 seconds
+    timeout: 120000, // 2 minutes
     maxRetries: 3,
     retryDelay: 1000 // 1 second
   },
